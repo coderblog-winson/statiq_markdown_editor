@@ -1,0 +1,212 @@
+/* ---------- new post page ---------- */
+.new-page {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 0 0 64px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 28px;
+  align-items: start;
+}
+
+.new-header {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+.new-header h1 {
+  margin: 0;
+  font-size: 1.7rem;
+}
+.new-intro {
+  grid-column: 1 / -1;
+  margin-bottom: 4px;
+}
+
+.new-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  background: var(--bg-elevated);
+  padding: 22px 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.new-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--text-soft);
+}
+.new-form label > span {
+  font-weight: 500;
+  color: var(--text);
+}
+.new-form label em {
+  font-weight: 400;
+  color: var(--text-muted);
+  font-style: normal;
+  font-size: 12px;
+  margin-left: 6px;
+}
+.new-form label em.req {
+  color: var(--danger);
+  font-weight: 500;
+}
+.new-form input,
+.new-form select,
+.new-form textarea {
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: 13px;
+  background: var(--bg);
+  color: var(--text);
+}
+.new-form input:focus,
+.new-form select:focus,
+.new-form textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.new-form input.invalid,
+.new-form input[aria-invalid="true"] {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+}
+.new-form input.invalid:focus,
+.new-form input[aria-invalid="true"]:focus {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 3px var(--danger-soft);
+}
+.new-form textarea {
+  font-family: var(--sans);
+  resize: vertical;
+  min-height: 70px;
+}
+.new-form .grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+.field-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  min-height: 16px;
+  margin-top: 2px;
+}
+.field-hint.warn { color: var(--warning); }
+.field-hint.ok { color: var(--success); }
+.field-error {
+  font-size: 12px;
+  color: var(--danger);
+  margin-top: 2px;
+  font-weight: 500;
+}
+
+/* Checkbox row (Draft toggle) — laid out inline so it doesn't feel
+   like yet another form column. */
+.new-form label.checkbox-row {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 10px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  cursor: pointer;
+}
+.new-form label.checkbox-row input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  flex: 0 0 auto;
+  cursor: pointer;
+}
+.new-form .checkbox-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.new-form .checkbox-label strong {
+  font-weight: 500;
+  color: var(--text);
+  font-size: 13px;
+}
+.new-form .checkbox-label em {
+  font-weight: 400;
+  color: var(--text-muted);
+  font-style: normal;
+  font-size: 12px;
+  margin: 0;
+}
+.new-form .checkbox-label code {
+  font-family: var(--mono);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 4px;
+  font-size: 11px;
+}
+
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.frontmatter-preview {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  position: sticky;
+  top: 68px;
+}
+.frontmatter-preview h3 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin: 0 0 4px;
+  font-family: var(--sans);
+  font-weight: 600;
+}
+.frontmatter-preview p {
+  font-size: 12px;
+  margin: 0 0 10px;
+}
+.frontmatter-preview pre {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.6;
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+  max-height: 360px;
+  overflow: auto;
+}
+
+@media (max-width: 760px) {
+  .new-page {
+    grid-template-columns: 1fr;
+  }
+  .frontmatter-preview {
+    position: static;
+    order: 2;
+  }
+}

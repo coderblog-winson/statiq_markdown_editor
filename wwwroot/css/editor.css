@@ -1,0 +1,492 @@
+/* ---------- editor shell ---------- */
+.editor-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-elevated);
+}
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  flex-shrink: 0;
+  min-height: 48px;
+}
+.toolbar-left { display: flex; align-items: center; gap: 12px; min-width: 0; flex: 0 0 auto; }
+.toolbar-right { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; }
+.toolbar-center {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+  justify-content: center;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.tb-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-soft);
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  white-space: nowrap;
+  user-select: none;
+}
+.tb-btn:hover { background: var(--bg-soft); color: var(--text); border-color: var(--border); }
+.tb-btn:active { background: var(--bg-hover); }
+.tb-btn.tb-btn-primary {
+  background: var(--accent-soft);
+  color: var(--accent-hover);
+  border-color: transparent;
+  margin-left: 4px;
+  font-weight: 600;
+}
+.tb-btn.tb-btn-primary:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+.tb-sep {
+  display: inline-block;
+  width: 1px;
+  height: 20px;
+  background: var(--border);
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+.file-meta { min-width: 0; }
+.file-path {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-stats {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  margin-top: 1px;
+}
+.dirty-indicator {
+  color: var(--warning);
+  font-size: 12px;
+  font-weight: 500;
+}
+.editor-host {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: var(--bg-elevated);
+  display: flex;
+  min-height: 0;
+}
+.pane {
+  position: relative;
+  flex: 1 1 50%;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.editor-pane {
+  background: var(--bg-elevated);
+}
+.preview-pane {
+  background: var(--bg);
+  border-left: 1px solid var(--border);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.preview-pane-header {
+  flex: 0 0 auto;
+  padding: 6px 32px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: var(--text-muted);
+  background: var(--bg-soft);
+  border-bottom: 1px solid var(--border);
+  text-transform: uppercase;
+  user-select: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.preview-status {
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.preview-status.error { color: var(--danger); }
+.preview-status.ok { color: var(--success); }
+
+/* View modes */
+.editor-host.view-mode-edit .pane.preview-pane { display: none; }
+.editor-host.view-mode-edit .pane.editor-pane { flex: 1 1 100%; }
+.editor-host.view-mode-preview .pane.editor-pane { display: none; }
+.editor-host.view-mode-preview .pane.preview-pane { flex: 1 1 100%; border-left: none; }
+.editor-host.view-mode-split .pane.editor-pane { flex: 1 1 50%; }
+.editor-host.view-mode-split .pane.preview-pane { flex: 1 1 50%; display: flex; }
+
+.monaco-container {
+  position: absolute;
+  inset: 0;
+}
+/* Allow long words (URLs, code-like snippets) to break mid-character
+   so wrapped text fills the line instead of leaving a wide right margin
+   and forcing a one-word orphan on the next line. The user explicitly
+   said "断了字也没关系" — tight visual packing matters more here than
+   preserving the original word boundaries. */
+.monaco-container .view-line,
+.monaco-container .view-line span {
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+}
+
+/* View-mode toggle */
+.view-toggle {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--bg-elevated);
+}
+.vt-btn {
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--border);
+  padding: 4px 10px;
+  font-size: 14px;
+  cursor: pointer;
+  color: var(--text-soft);
+  transition: background 0.12s, color 0.12s;
+  line-height: 1;
+}
+.vt-btn:last-child { border-right: none; }
+.vt-btn:hover { background: var(--bg-soft); color: var(--text); }
+.vt-btn[aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: var(--accent-hover);
+  font-weight: 600;
+}
+
+/* Preview content styling */
+.preview-content {
+  max-width: 760px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 24px 32px 64px;
+  font-family: var(--serif);
+  font-size: 17px;
+  line-height: 1.75;
+  color: var(--text);
+  overflow: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.preview-content h1,
+.preview-content h2,
+.preview-content h3,
+.preview-content h4 {
+  font-family: var(--serif);
+  font-weight: 700;
+  margin: 1.4em 0 0.5em;
+  line-height: 1.25;
+  color: var(--text);
+}
+.preview-content h1 { font-size: 2.2rem; border-bottom: 2px solid var(--border); padding-bottom: 0.2em; }
+.preview-content h2 { font-size: 1.7rem; color: var(--accent-hover); }
+.preview-content h3 { font-size: 1.3rem; }
+.preview-content h4 { font-size: 1.1rem; }
+.preview-content p { margin: 0 0 1em; }
+.preview-content code {
+  font-family: var(--mono);
+  background: var(--bg-soft);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+.preview-content pre {
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  padding: 12px 14px;
+  border-radius: 6px;
+  overflow: auto;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.preview-content pre code {
+  background: transparent;
+  padding: 0;
+  font-size: inherit;
+}
+.preview-content blockquote {
+  border-left: 3px solid var(--accent);
+  padding: 0.2em 0 0.2em 1em;
+  margin: 1em 0;
+  color: var(--text-soft);
+  font-style: italic;
+}
+.preview-content ul, .preview-content ol { padding-left: 1.6em; margin: 0 0 1em; }
+.preview-content li { margin-bottom: 0.3em; }
+
+/* Statiq <?# Figure ?> shortcode (rendered by the marked extension) */
+.preview-content figure.statiq-figure {
+  margin: 1.5em 0;
+  text-align: center;
+}
+.preview-content figure.statiq-figure img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  display: block;
+  margin: 0 auto;
+}
+.preview-content figure.statiq-figure figcaption {
+  margin-top: 0.6em;
+  font-size: 0.92em;
+  color: var(--text-soft);
+  font-style: italic;
+  line-height: 1.4;
+}
+.preview-content a { color: var(--accent); }
+.preview-content hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
+.preview-content img { max-width: 100%; height: auto; border-radius: 4px; margin: 0.5em 0; }
+.preview-content table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1em 0;
+  font-size: 14px;
+}
+.preview-content th, .preview-content td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  text-align: left;
+}
+.preview-content th { background: var(--bg-soft); font-weight: 600; }
+.preview-content .empty { color: var(--text-muted); font-style: italic; }
+.editor-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 13px;
+  background: var(--bg-elevated);
+  z-index: 1;
+  pointer-events: none;
+}
+.editor-loading[hidden] { display: none; }
+
+.editor-statusbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  flex-shrink: 0;
+  height: 24px;
+  gap: 12px;
+}
+.editor-statusbar .mode-badge {
+  padding: 1px 8px;
+  border-radius: 3px;
+  background: var(--accent-soft);
+  color: var(--accent-hover);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Group containers in the status bar so the 4 elements arrange as
+   [mode | spell] on the left and [status | issues] on the right
+   instead of being spread evenly. */
+.editor-statusbar {
+  /* override the previous display from above to use the groups */
+  gap: 0;
+}
+.editor-statusbar .statusbar-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.editor-statusbar .statusbar-left-group { justify-content: flex-start; }
+.editor-statusbar .statusbar-right-group { margin-left: auto; }
+
+/* Spell + grammar check toggle. Lives in the status bar so it's
+   always visible. Click to flip on/off; preference persists in
+   localStorage. */
+.spell-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 8px;
+  border-radius: 3px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.spell-toggle:hover { background: var(--bg-soft); color: var(--text); border-color: var(--border); }
+.spell-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.spell-toggle .spell-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex-shrink: 0;
+}
+.spell-toggle.spell-on { color: var(--success); }
+.spell-toggle.spell-on .spell-dot { background: var(--success); box-shadow: 0 0 0 2px color-mix(in srgb, var(--success) 25%, transparent); }
+.spell-toggle.spell-off { color: var(--text-muted); }
+.spell-toggle.spell-off .spell-dot { background: var(--text-muted); }
+
+/* LanguageTool toggle — uses a distinct accent so users can tell
+   it apart from the local spell check at a glance. */
+.spell-toggle.lt-toggle.lt-on { color: #8b5cf6; /* violet-500 */ }
+.spell-toggle.lt-toggle.lt-on .spell-dot {
+  background: #8b5cf6;
+  box-shadow: 0 0 0 2px color-mix(in srgb, #8b5cf6 25%, transparent);
+}
+.spell-toggle.lt-toggle.lt-off { color: var(--text-muted); }
+.spell-toggle.lt-toggle.lt-off .spell-dot { background: var(--text-muted); }
+/* While a LanguageTool request is in flight, animate the dot. */
+.spell-toggle.lt-toggle.lt-checking .spell-dot {
+  animation: lt-pulse 1.2s ease-in-out infinite;
+}
+
+/* Auto-save toggle — blue accent so it reads as a separate concern
+   from spell/grammar (green/violet). On = solid blue dot, off = muted. */
+.spell-toggle.auto-save-toggle.auto-save-on { color: #2563eb; /* blue-600 */ }
+.spell-toggle.auto-save-toggle.auto-save-on .spell-dot {
+  background: #2563eb;
+  box-shadow: 0 0 0 2px color-mix(in srgb, #2563eb 25%, transparent);
+}
+.spell-toggle.auto-save-toggle.auto-save-off { color: var(--text-muted); }
+.spell-toggle.auto-save-toggle.auto-save-off .spell-dot { background: var(--text-muted); }
+/* Pulse briefly when an auto-save fires, so the user sees the
+   toggle flicker and knows "yep, that was the 60s tick". */
+.spell-toggle.auto-save-toggle.auto-save-saving .spell-dot {
+  animation: autosave-pulse 0.4s ease-out 1;
+}
+@keyframes autosave-pulse {
+  0%   { box-shadow: 0 0 0 0   color-mix(in srgb, #2563eb 70%, transparent); }
+  100% { box-shadow: 0 0 0 8px color-mix(in srgb, #2563eb 0%, transparent); }
+}
+@keyframes lt-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.4; transform: scale(0.7); }
+}
+
+/* Grammarly's iframe bubble — give it room so it doesn't push Monaco around */
+.gr_-plsngr, .gr_inline_edit_btn { z-index: 9999 !important; }
+
+/* ---------- script-runner modal (Preview / Deploy) ---------- */
+.script-panel {
+  max-width: 880px;
+  width: 90vw;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+}
+.script-panel .modal-header { gap: 12px; }
+.script-panel .modal-header h2 { flex: 0 0 auto; }
+.script-status {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--bg-soft);
+  color: var(--text-soft);
+  text-align: center;
+}
+.script-status.status-running { background: #e6f0ff; color: #1854b3; }
+.script-status.status-ready   { background: #d9ecea; color: #1c4a48; }
+.script-status.status-done    { background: #d9ecea; color: #1c4a48; }
+.script-status.status-error   { background: var(--danger-soft); color: var(--danger); }
+.script-status.status-idle    { background: var(--bg-soft); color: var(--text-muted); }
+.script-body {
+  flex: 1;
+  min-height: 280px;
+  padding: 0;
+  background: #1e1f22;
+}
+.script-log {
+  margin: 0;
+  padding: 12px 14px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.45;
+  color: #d8d8d2;
+  background: transparent;
+  white-space: pre-wrap;
+  word-break: break-all;
+  height: 360px;
+  max-height: 50vh;
+  overflow: auto;
+}
+.script-log .err-line { color: #ff8a80; }
+.script-log .ok-line  { color: #8de08d; }
+.script-panel .modal-footer { gap: 8px; }
+.script-panel .spacer { flex: 1; }
+
+/* Toolbar button state pills for Preview/Deploy — give the user a
+   glanceable cue when something is in-flight or a server is live. */
+#preview-btn.btn-running,
+#deploy-btn.btn-running {
+  background: #e6f0ff;
+  color: #1854b3;
+  border-color: #b9d3ff;
+}
+#preview-btn.btn-ready {
+  background: #d9ecea;
+  color: #1c4a48;
+  border-color: #a9d3cf;
+}
+#preview-btn.btn-running::before,
+#deploy-btn.btn-running::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+  margin-right: 6px;
+  animation: spin-pulse 1.2s linear infinite;
+}
+@keyframes spin-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.35; }
+}

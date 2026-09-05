@@ -1,0 +1,160 @@
+@page
+@model StatiqMarkdownEditor.Pages.EditorModel
+@{
+    ViewData["Title"] = "Editor — Statiq MD Editor";
+}
+@section Styles {
+    <link rel="stylesheet" href="~/css/editor.css" asp-append-version="true" />
+}
+
+<div class="editor-shell">
+    <div class="editor-toolbar">
+        <div class="toolbar-left">
+            <a href="/" class="btn btn-ghost btn-icon" title="Back to list" aria-label="Back">←</a>
+            <div class="file-meta">
+                <div class="file-path" id="file-path">—</div>
+                <div class="file-stats" id="file-stats"></div>
+            </div>
+        </div>
+
+        <div class="toolbar-center" id="format-toolbar" role="toolbar" aria-label="Markdown formatting">
+            <button type="button" class="tb-btn" data-action="bold" title="Bold (⌘B)" aria-label="Bold">
+                <strong>B</strong>
+            </button>
+            <button type="button" class="tb-btn" data-action="italic" title="Italic (⌘I)" aria-label="Italic">
+                <em>I</em>
+            </button>
+            <span class="tb-sep" aria-hidden="true"></span>
+            <button type="button" class="tb-btn" data-action="h1" title="Heading 1 (⌘1)" aria-label="Heading 1">H1</button>
+            <button type="button" class="tb-btn" data-action="h2" title="Heading 2 (⌘2)" aria-label="Heading 2">H2</button>
+            <button type="button" class="tb-btn" data-action="h3" title="Heading 3 (⌘3)" aria-label="Heading 3">H3</button>
+            <button type="button" class="tb-btn" data-action="h4" title="Heading 4 (⌘4)" aria-label="Heading 4">H4</button>
+            <button type="button" class="tb-btn" data-action="h5" title="Heading 5 (⌘5)" aria-label="Heading 5">H5</button>
+            <button type="button" class="tb-btn" data-action="h6" title="Heading 6 (⌘6)" aria-label="Heading 6">H6</button>
+            <button type="button" class="tb-btn" data-action="h7" title="Heading 7 (⌘7)" aria-label="Heading 7">H7</button>
+            <span class="tb-sep" aria-hidden="true"></span>
+            <button type="button" class="tb-btn" data-action="ul" title="Bulleted list (⌘⇧8)" aria-label="Bulleted list">•</button>
+            <button type="button" class="tb-btn" data-action="ol" title="Numbered list (⌘⇧7)" aria-label="Numbered list">1.</button>
+            <button type="button" class="tb-btn" data-action="quote" title="Block quote (⌘⇧.)" aria-label="Block quote">&gt;</button>
+            <button type="button" class="tb-btn" data-action="quote-inline" title="Inline quote (⌘⇧&quot;)" aria-label="Inline quote">&ldquo;</button>
+            <span class="tb-sep" aria-hidden="true"></span>
+            <button type="button" class="tb-btn" data-action="code" title="Inline code (⌘E, or press ` on a selection)" aria-label="Inline code">`</button>
+            <button type="button" class="tb-btn" data-action="codeblock" title="Fenced code block (⌘⇧E)" aria-label="Code block">{}</button>
+            <button type="button" class="tb-btn" data-action="linebreak" title="Hard line break — inserts backslash + newline at every cursor" aria-label="Line break">↵</button>
+            <span class="tb-sep" aria-hidden="true"></span>
+            <button type="button" class="tb-btn" data-action="link" title="Link (⌘K)" aria-label="Link">🔗</button>
+            <button type="button" class="tb-btn tb-btn-primary" data-action="upload-image"
+                    title="Upload image — from clipboard (⌘⇧V) or local file (⌘⇧O)" aria-label="Upload image">
+                🖼 <span>Image</span>
+            </button>
+            <input type="file" id="image-file-input" accept="image/*" hidden />
+        </div>
+
+        <div class="toolbar-right">
+            <div class="view-toggle" role="group" aria-label="View mode">
+                <button type="button" class="vt-btn" data-view="edit" id="view-edit-btn" title="Editor only (⌘\\)" aria-pressed="true">📝</button>
+                <button type="button" class="vt-btn" data-view="split" id="view-split-btn" title="Side by side (⌘\\)" aria-pressed="false">⬌</button>
+                <button type="button" class="vt-btn" data-view="preview" id="view-preview-btn" title="Preview only (⌘\\)" aria-pressed="false">👁</button>
+            </div>
+            <span class="dirty-indicator" id="dirty-indicator" hidden>● unsaved</span>
+            <button type="button" class="btn btn-ghost" id="discard-btn" hidden>Discard</button>
+            <span class="tb-sep" aria-hidden="true"></span>
+            <button type="button" class="btn btn-ghost" id="preview-btn"
+                    title="Run the preview script (configured in Settings) — builds the site and starts a local HTTP server"
+                    aria-label="Preview">
+                <span aria-hidden="true">▶</span> Preview
+            </button>
+            <button type="button" class="btn btn-ghost" id="deploy-btn"
+                    title="Run the deploy script (configured in Settings) — builds the site and publishes it"
+                    aria-label="Deploy">
+                <span aria-hidden="true">↑</span> Deploy
+            </button>
+            <button type="button" class="btn btn-primary" id="save-btn" disabled>Save</button>
+        </div>
+    </div>
+
+    <div class="editor-host view-mode-split" id="editor-host">
+        <div class="pane editor-pane">
+            <div id="monaco-container" class="monaco-container"></div>
+            <div class="editor-loading" id="editor-loading">
+                <span>Loading Monaco editor…</span>
+            </div>
+        </div>
+        <div class="pane preview-pane" id="preview-pane">
+            <div class="preview-pane-header">
+                <span>PREVIEW</span>
+                <span class="preview-status" id="preview-status"></span>
+            </div>
+            <div class="preview-content" id="preview-content">
+                <p class="empty">Preview will appear here…</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="editor-statusbar">
+        <div class="statusbar-group statusbar-left-group">
+            <span class="mode-badge" id="mode-badge">View: split</span>
+            <button type="button" id="auto-save-toggle" class="spell-toggle auto-save-toggle auto-save-on"
+                    title="Toggle auto-save (saves the post every 60s if there are unsaved changes)"
+                    aria-pressed="true">
+                <span class="spell-dot" aria-hidden="true"></span>
+                <span id="auto-save-toggle-label">Auto-save: on</span>
+            </button>
+            <button type="button" id="spell-toggle" class="spell-toggle spell-on"
+                    title="Toggle offline spell + grammar check (nspell, slow on long posts)"
+                    aria-pressed="true">
+                <span class="spell-dot" aria-hidden="true"></span>
+                <span id="spell-toggle-label">Spell: on</span>
+            </button>
+            <button type="button" id="lt-toggle" class="spell-toggle lt-toggle lt-on"
+                    title="Toggle LanguageTool online check (grammar, spelling, style; ~20 req/min)"
+                    aria-pressed="true">
+                <span class="spell-dot" aria-hidden="true"></span>
+                <span id="lt-toggle-label">Grammar: on</span>
+            </button>
+        </div>
+        <div class="statusbar-group statusbar-right-group">
+            <span id="statusbar-left">Ready</span>
+            <span id="statusbar-right"></span>
+        </div>
+    </div>
+</div>
+
+<!-- Script output modal: shows the live log of preview.sh / build_deploy.sh
+     runs, polls /api/scripts/{action}/{log,status} once a second, and offers
+     a "Stop" button for the long-lived preview server. -->
+<div class="modal" id="script-modal" hidden>
+    <div class="modal-backdrop" data-script-close></div>
+    <div class="modal-panel script-panel">
+        <header class="modal-header">
+            <h2 id="script-modal-title">Preview</h2>
+            <span id="script-modal-status" class="script-status status-idle">idle</span>
+            <button type="button" class="modal-close" data-script-close aria-label="Close">×</button>
+        </header>
+        <div class="modal-body script-body">
+            <pre id="script-log" class="script-log" aria-live="polite"></pre>
+        </div>
+        <footer class="modal-footer">
+            <a id="script-open-link" href="#" target="_blank" rel="noopener" class="btn btn-ghost" hidden>Open preview ↗</a>
+            <button type="button" class="btn btn-ghost" id="script-stop-btn" hidden>Stop</button>
+            <span class="spacer"></span>
+            <button type="button" class="btn btn-ghost" data-script-close>Close</button>
+        </footer>
+    </div>
+</div>
+
+@section Scripts {
+    @* IMPORTANT: marked / purify / turndown must load BEFORE monaco's loader.
+       Monaco's AMD loader registers `window.define`; if these UMD bundles
+       load after it, they hit the AMD branch and call anonymous `define()`,
+       which collides with Monaco's own anonymous define and silently fails
+       to attach `window.marked` / `window.DOMPurify`. *@
+    <script src="~/vendor/marked.min.js" asp-append-version="true"></script>
+    <script src="~/vendor/purify.min.js" asp-append-version="true"></script>
+    <script src="https://unpkg.com/turndown@7.2.0/dist/turndown.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs/loader.js"></script>
+    <script src="~/js/spellcheck.js" asp-append-version="true"></script>
+    <script src="~/js/grammar.js" asp-append-version="true"></script>
+    <script src="~/js/languagetool.js" asp-append-version="true"></script>
+    <script src="~/js/editor.js" asp-append-version="true"></script>
+}

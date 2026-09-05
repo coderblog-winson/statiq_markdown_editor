@@ -1,0 +1,45 @@
+@{
+    var currentPath = Context.Request.Path.Value ?? "/";
+    var isEditor = currentPath.StartsWith("/editor", StringComparison.OrdinalIgnoreCase);
+}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>@(ViewData["Title"] ?? "Statiq Markdown Editor")</title>
+    <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet"
+          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&family=JetBrains+Mono:wght@400;500&display=swap" />
+    @RenderSection("Styles", required: false)
+</head>
+<body class="@(isEditor ? "editor-page" : "list-page")">
+    <header class="app-header">
+        <div class="brand">
+            <a href="/" class="brand-link">
+                <span class="brand-mark">⌘</span>
+                <span class="brand-name">Statiq MD Editor</span>
+            </a>
+        </div>
+        <nav class="header-nav">
+            <a href="/" class="nav-link @(currentPath == "/" ? "active" : "")">Posts</a>
+            <a href="/New" class="nav-link @(currentPath.StartsWith("/New", StringComparison.OrdinalIgnoreCase) ? "active" : "")">New</a>
+            <a href="/Settings" class="nav-link @(currentPath.StartsWith("/Settings", StringComparison.OrdinalIgnoreCase) ? "active" : "")">Settings</a>
+        </nav>
+        <div class="header-right">
+            <a href="/api/posts" target="_blank" class="nav-link subtle" title="Open API as JSON">API</a>
+        </div>
+    </header>
+
+    <main class="app-main">
+        @RenderBody()
+    </main>
+
+    <div id="toast-host" class="toast-host" aria-live="polite"></div>
+
+    @RenderSection("Scripts", required: false)
+</body>
+</html>

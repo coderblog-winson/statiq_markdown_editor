@@ -1,0 +1,11 @@
+@page
+@model StatiqMarkdownEditor.Pages.ErrorModel
+@{
+    ViewData["Title"] = "Error";
+    var code = Response.StatusCode;
+}
+<section class="error-page">
+    <h1>Error @code</h1>
+    <p>Something went wrong while handling your request.</p>
+    <p><a href="/" class="btn btn-ghost">← Back to posts</a></p>
+</section>

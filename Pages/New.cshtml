@@ -1,0 +1,101 @@
+@page
+@model StatiqMarkdownEditor.Pages.NewModel
+@{
+    ViewData["Title"] = "New post — Statiq MD Editor";
+}
+@section Styles {
+    <link rel="stylesheet" href="~/css/new.css" asp-append-version="true" />
+}
+
+<section class="new-page">
+    <header class="new-header">
+        <a href="/" class="btn btn-ghost btn-icon" title="Back to list">←</a>
+        <h1>New post</h1>
+    </header>
+
+    <p class="muted new-intro">
+        Fill in the frontmatter. The file is created with this exact YAML block at the top, in the
+        order shown below. After creating, you'll be taken to the editor with Grammarly ready.
+    </p>
+
+    <form id="new-post-form" class="new-form" autocomplete="off">
+        <label>
+            <span>Title <em>(required)</em></span>
+            <input type="text" name="title" required maxlength="200"
+                   placeholder="Your first ASP.NET Core Web API in 5 mins" autofocus />
+        </label>
+
+        <div class="grid-2">
+            <label>
+                <span id="slug-label">Slug <em>(optional, derived from title)</em></span>
+                <input type="text" name="slug" id="slug-field" maxlength="120"
+                       placeholder="your-first-asp-net-core-web-api" />
+                <span class="field-hint" id="slug-hint"></span>
+                <span class="field-error" id="slug-error" hidden></span>
+            </label>
+            <label>
+                <span>Date <em>(required)</em></span>
+                <input type="date" name="date" id="date-field" required />
+            </label>
+        </div>
+
+        <div class="grid-2">
+            <label>
+                <span>Layout <em>(Statiq layout template)</em></span>
+                <select name="layout" id="layout-field">
+                    <option value="_PostLayout" selected>_PostLayout (article page)</option>
+                    <option value="_ListLayout">_ListLayout (list page)</option>
+                    <option value="">(no layout)</option>
+                </select>
+            </label>
+            <label>
+                <span>Category</span>
+                <input type="text" name="category" list="known-categories" maxlength="60"
+                       placeholder="ASP.NET" />
+                <datalist id="known-categories"></datalist>
+            </label>
+        </div>
+
+        <label>
+            <span>Tags <em>(comma separated)</em></span>
+            <input type="text" name="tags" maxlength="200"
+                   placeholder="ASP.NET, Core, Web API, C#" />
+        </label>
+
+        <label>
+            <span>Image <em>(path under /images/, optional)</em></span>
+            <input type="text" name="image" maxlength="300"
+                   placeholder="/images/2026-09/your-post-cover.webp" />
+            <span class="field-hint">The hero image shown on the post and in homepage cards.</span>
+        </label>
+
+        <label>
+            <span>Description <em>(used for SEO and homepage card)</em></span>
+            <textarea name="description" rows="3" maxlength="500"
+                      placeholder="This is a beginner article to let you easy to setup an ASP.NET Core Web API."></textarea>
+        </label>
+
+        <label class="checkbox-row">
+            <input type="checkbox" name="draft" id="draft-field" value="true" />
+            <span class="checkbox-label">
+                <strong>Save as draft</strong>
+                <em>Statiq skips drafts during build. Default is <code>Draft: false</code> (publishable).</em>
+            </span>
+        </label>
+
+        <div class="form-actions">
+            <a href="/" class="btn btn-ghost">Cancel</a>
+            <button type="submit" class="btn btn-primary" id="submit-btn">Create &amp; edit</button>
+        </div>
+    </form>
+
+    <aside class="frontmatter-preview">
+        <h3>Preview</h3>
+        <p class="muted">All frontmatter fields are written, even when blank — so you can fill them in later by editing the file directly.</p>
+        <pre id="fm-preview">---</pre>
+    </aside>
+</section>
+
+@section Scripts {
+    <script src="~/js/new.js" asp-append-version="true"></script>
+}

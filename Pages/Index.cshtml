@@ -1,0 +1,83 @@
+@page
+@model StatiqMarkdownEditor.Pages.IndexModel
+@{
+    ViewData["Title"] = "Posts — Statiq MD Editor";
+}
+@section Styles {
+    <link rel="stylesheet" href="~/css/list.css" asp-append-version="true" />
+}
+
+<section class="list-toolbar">
+    <div class="toolbar-left">
+        <input type="search"
+               id="search-input"
+               class="search-input"
+               placeholder="Search title or filename…"
+               autocomplete="off"
+               autofocus />
+        <select id="category-filter" class="category-filter">
+            <option value="">All categories</option>
+        </select>
+    </div>
+    <div class="toolbar-right">
+        <span id="post-count" class="post-count">— posts</span>
+        <a href="/New" class="btn btn-primary" id="new-post-btn">+ New post</a>
+    </div>
+</section>
+
+<section class="post-list" id="post-list">
+    <div class="post-list-empty" id="post-list-empty" hidden>
+        <p>No posts match your filter.</p>
+    </div>
+    <div class="post-list-loading" id="post-list-loading">Loading…</div>
+    <ul class="post-cards" id="post-cards"></ul>
+    <nav class="pagination" id="pagination" hidden aria-label="Posts pagination"></nav>
+</section>
+
+<!-- Rename modal -->
+<div class="modal" id="rename-modal" hidden>
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel">
+        <header class="modal-header">
+            <h2>Rename file</h2>
+            <button type="button" class="modal-close" data-close>×</button>
+        </header>
+        <form id="rename-form" class="modal-body">
+            <label>
+                <span>Current path</span>
+                <input type="text" id="rename-current" disabled />
+            </label>
+            <label>
+                <span>New slug <em>(.md extension will be added)</em></span>
+                <input type="text" id="rename-new" required maxlength="160" />
+            </label>
+            <p class="hint">Renaming only changes the file name. Frontmatter Title, Date, and URL slug are not touched.</p>
+        </form>
+        <footer class="modal-footer">
+            <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+            <button type="submit" form="rename-form" class="btn btn-primary" id="rename-submit">Rename</button>
+        </footer>
+    </div>
+</div>
+
+<!-- Delete confirm modal -->
+<div class="modal" id="delete-modal" hidden>
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel small">
+        <header class="modal-header">
+            <h2>Delete post</h2>
+            <button type="button" class="modal-close" data-close>×</button>
+        </header>
+        <div class="modal-body">
+            <p>Permanently delete <code id="delete-name"></code>? This cannot be undone.</p>
+        </div>
+        <footer class="modal-footer">
+            <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+            <button type="button" class="btn btn-danger" id="delete-confirm">Delete</button>
+        </footer>
+    </div>
+</div>
+
+@section Scripts {
+    <script src="~/js/list.js" asp-append-version="true"></script>
+}
