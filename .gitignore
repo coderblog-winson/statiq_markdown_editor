@@ -5,4 +5,11 @@ obj/
 .idea/
 .DS_Store
 *.log
-appsettings.json
+
+# Per-developer overrides. The committed appsettings.json is an empty
+# skeleton so `dotnet run` works for anyone who clones; real local paths
+# go in appsettings.Development.json (auto-loaded when ASPNETCORE_ENVIRONMENT=Development,
+# which is the default for `dotnet run` / `dotnet watch`).
+appsettings.Development.json
+appsettings.Production.json
+appsettings.Local.json
