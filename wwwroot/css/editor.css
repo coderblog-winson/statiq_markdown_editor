@@ -160,6 +160,28 @@
   word-break: break-all;
   overflow-wrap: anywhere;
 }
+
+/* Compact wrapping: Monaco's defaults add ~10px right padding inside
+   .view-lines and a few px of left padding on each .view-line, which
+   on split view leaves a wide "wallpaper" margin on both sides and
+   makes the wrap point kick in way before the editor edge. Kill those
+   paddings so wrapped text fills the available width and (with
+   wrappingIndent: 'none') the continuation lines start flush-left at
+   the gutter edge — the way the user wants it. */
+.monaco-container .view-lines {
+  padding-right: 0 !important;
+  padding-left: 0 !important;
+}
+.monaco-container .view-line {
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+}
+/* Shrink the line-number gutter so the content area can use the
+   recovered space. lineNumbersMinChars: 3 in the editor options
+   is the source of the gap on the left; we also reduce the overlay
+   margin Monaco adds by default. */
+.monaco-container .margin-view-overlays {
+  padding-right: 4px;
 }
 
 /* View-mode toggle */

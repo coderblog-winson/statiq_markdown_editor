@@ -1397,10 +1397,13 @@
                                     ? `Replace with "${sug}"`
                                     : `Replace with "${sug}"`,
                                 kind: 'quickfix',
+                                // Monaco 0.45.0 IWorkspaceTextEdit uses `textEdit`
+                                // (not `edit`) for the inner TextEdit field — the
+                                // wrong name makes the action silently no-op.
                                 edit: {
                                     edits: [{
                                         resource: model.uri,
-                                        edit: {
+                                        textEdit: {
                                             range: new monaco.Range(
                                                 mk.startLineNumber, mk.startColumn,
                                                 mk.endLineNumber, mk.endColumn,
@@ -1418,7 +1421,6 @@
                             actions.push({
                                 title: 'Ignore this word',
                                 kind: 'quickfix',
-                                edit: { edits: [] },
                                 command: { id: 'sme.ignore-word', title: 'Ignore', arguments: [meta.word] },
                             });
                         }
@@ -1480,10 +1482,15 @@
                                     ? `LT: Replace with "${sug}"`
                                     : `LT: Replace with "${sug}"`,
                                 kind: 'quickfix',
+                                // Monaco 0.45.0 IWorkspaceTextEdit uses `textEdit`
+                                // (not `edit`) for the inner TextEdit field — the
+                                // wrong name makes the action silently no-op
+                                // (the only visible effect is the line break the
+                                // editor inserts when no edit lands).
                                 edit: {
                                     edits: [{
                                         resource: model.uri,
-                                        edit: {
+                                        textEdit: {
                                             range: new monaco.Range(
                                                 mk.startLineNumber, mk.startColumn,
                                                 mk.endLineNumber, mk.endColumn,
