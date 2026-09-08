@@ -484,31 +484,7 @@
 .script-panel .modal-footer { gap: 8px; }
 .script-panel .spacer { flex: 1; }
 
-/* Toolbar button state pills for Preview/Deploy — give the user a
-   glanceable cue when something is in-flight or a server is live. */
-#preview-btn.btn-running,
-#deploy-btn.btn-running {
-  background: #e6f0ff;
-  color: #1854b3;
-  border-color: #b9d3ff;
-}
-#preview-btn.btn-ready {
-  background: #d9ecea;
-  color: #1c4a48;
-  border-color: #a9d3cf;
-}
-#preview-btn.btn-running::before,
-#deploy-btn.btn-running::before {
-  content: '';
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  border-radius: 999px;
-  background: currentColor;
-  margin-right: 6px;
-  animation: spin-pulse 1.2s linear infinite;
-}
-@keyframes spin-pulse {
-  0%, 100% { opacity: 1; }
-  50%      { opacity: 0.35; }
-}
+/* Preview / Deploy state pills (.btn-running / .btn-ready) moved to
+   site.css so they apply to the top-nav version of the buttons
+   site-wide. The Editor page no longer has its own Preview / Deploy
+   buttons — they live in _Layout.cshtml. */

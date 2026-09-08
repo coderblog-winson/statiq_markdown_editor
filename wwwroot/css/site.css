@@ -112,6 +112,44 @@ h3 { font-size: 1.15rem; }
 .nav-link.active { color: var(--text); background: var(--bg-soft); }
 .nav-link.subtle { color: var(--text-muted); }
 
+/* Action variant for nav buttons (Preview / Deploy). Same look as
+   .nav-link but a real <button> with cursor and disabled handling, and
+   can carry the .btn-running / .btn-ready state pills that script-runner
+   toggles. */
+.nav-link.nav-action {
+    background: transparent;
+    border: 1px solid var(--border);
+    cursor: pointer;
+    font-family: inherit;
+}
+.nav-link.nav-action:hover { border-color: var(--text-muted); }
+.nav-link.nav-action.btn-running,
+.nav-link.nav-action.btn-ready {
+    border-color: transparent;
+}
+.nav-link.nav-action.btn-running {
+    background: #e6f0ff;
+    color: #1854b3;
+}
+.nav-link.nav-action.btn-ready {
+    background: #d9ecea;
+    color: #1c4a48;
+}
+.nav-link.nav-action.btn-running::before {
+    content: '';
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: currentColor;
+    margin-right: 6px;
+    animation: spin-pulse 1.2s linear infinite;
+}
+@keyframes spin-pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.35; }
+}
+
 .app-main {
   min-height: calc(100vh - 52px);
 }

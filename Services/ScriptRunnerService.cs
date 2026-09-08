@@ -64,12 +64,31 @@ public class ScriptRunnerService
     {
         lock (_previewLock)
         {
-            if (IsPortOpen("127.0.0.1", port))
-            {
-                return (false, $"Port {port} is already in use — a preview server may be running. Stop it first or change the port in Settings.");
-            }
             if (string.IsNullOrEmpty(scriptPath)) return (false, "Preview script path is not configured. Set it in Settings.");
             if (!File.Exists(scriptPath)) return (false, $"Script not found: {scriptPath}");
+
+            // Try to free the port BEFORE bailing out on "already in
+            // use". The previous behaviour was to refuse the call when
+            // the port was occupied — which meant a stale preview
+            // server (from a previous editor run, or a leftover python
+            // http.server after a crash) blocked the user forever even
+            // though preview.sh itself has the same recovery logic.
+            // Mirror what preview.sh does: lsof the port, SIGTERM the
+            // occupants, then SIGKILL the survivors, then re-check.
+            var (freed, killed, freeErr) = FreePort(port);
+            if (!string.IsNullOrEmpty(freeErr))
+            {
+                _log.LogWarning("FreePort({Port}) errored: {Err} — will check IsPortOpen anyway", port, freeErr);
+            }
+            if (killed > 0)
+            {
+                _log.LogInformation("FreePort({Port}) killed {Killed} stale process(es)", port, killed);
+            }
+
+            if (IsPortOpen("127.0.0.1", port))
+            {
+                return (false, $"Port {port} is still in use after killing {killed} stale process(es) — probably a system process or permission issue. Change the port in Settings or run `lsof -i tcp:{port}` to see who has it.");
+            }
 
             var scriptDir = Path.GetDirectoryName(scriptPath)!;
             var logFile = Path.Combine(scriptDir, ".editor_preview.log");
@@ -106,6 +125,75 @@ public class ScriptRunnerService
                 _log.LogError(ex, "Failed to start preview: {Script}", scriptPath);
                 return (false, ex.Message);
             }
+        }
+    }
+
+    /// <summary>
+    /// Free <paramref name="port"/> by killing any process listening on
+    /// it. Mirrors the recovery logic in preview.sh so the editor side
+    /// can recover from a stale preview server without bouncing the
+    /// user with "port already in use". Returns the number of PIDs
+    /// killed (may be 0 if the port was already free).
+    /// </summary>
+    public (bool ok, int killed, string? error) FreePort(int port)
+    {
+        if (port <= 0) return (true, 0, null);
+        if (!IsPortOpen("127.0.0.1", port)) return (true, 0, null);
+
+        int killed = 0;
+        try
+        {
+            // 1. SIGTERM the occupants, give them ~3 s to exit cleanly.
+            var termPsi = new ProcessStartInfo
+            {
+                FileName = "/bin/bash",
+                Arguments = $"-c \"pids=$(lsof -ti tcp:{port} 2>/dev/null); if [ -n \\\"$pids\\\" ]; then kill $pids 2>/dev/null; for _ in 1 2 3 4 5 6; do if ! lsof -ti tcp:{port} >/dev/null 2>&1; then break; fi; sleep 0.5; done; echo $pids; fi\"",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+            };
+            using (var p = Process.Start(termPsi))
+            {
+                if (p != null)
+                {
+                    var output = p.StandardOutput.ReadToEnd();
+                    p.WaitForExit(5000);
+                    foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+                    {
+                        if (int.TryParse(line.Trim(), out _)) killed++;
+                    }
+                }
+            }
+
+            // 2. If still listening, SIGKILL the survivors.
+            if (IsPortOpen("127.0.0.1", port))
+            {
+                var killPsi = new ProcessStartInfo
+                {
+                    FileName = "/bin/bash",
+                    Arguments = $"-c \"pids=$(lsof -ti tcp:{port} 2>/dev/null); if [ -n \\\"$pids\\\" ]; then kill -9 $pids 2>/dev/null; sleep 0.5; echo $pids; fi\"",
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                };
+                using var p2 = Process.Start(killPsi);
+                if (p2 != null)
+                {
+                    var output = p2.StandardOutput.ReadToEnd();
+                    p2.WaitForExit(3000);
+                    foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+                    {
+                        if (int.TryParse(line.Trim(), out _)) killed++;
+                    }
+                }
+            }
+
+            return (true, killed, null);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "FreePort({Port}) failed", port);
+            return (false, killed, ex.Message);
         }
     }
 

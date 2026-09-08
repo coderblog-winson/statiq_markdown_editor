@@ -52,29 +52,29 @@ public class SettingsService
     /// </summary>
     public async Task<(StatiqProjectOptions options, bool migrated)> LoadAsync()
     {
-        if (!File.Exists(ConfigPath)) return (new StatiqProjectOptions(), false);
+        // Source of truth = the merged IConfiguration (appsettings.json
+        // + appsettings.{Environment}.json + env vars). The on-disk file
+        // is just a persistence target — reading it directly is wrong
+        // because it can be an empty skeleton (the committed shape for
+        // public repos) while the real config lives in an env-specific
+        // override file.
+        var sp = _configRoot.GetSection("StatiqProject");
+        // IConfiguration represents arrays as child sections keyed "0",
+        // "1", "2", … — NOT as a scalar at the section's own path. So
+        // `sp["Projects"]` returns null even when the array is present.
+        // We detect "v2 shape" by looking for the child section.
+        var projectsSection = sp.GetSection("Projects");
+        // (debug logging removed)
 
-        JsonDocument doc;
-        try
+        // v2 shape: has a `Projects` section. Bind it from the merged
+        // config, then backfill any missing Watermarks.
+        if (projectsSection.Exists())
         {
-            doc = JsonDocument.Parse(await File.ReadAllTextAsync(ConfigPath, Encoding.UTF8));
-        }
-        catch
-        {
-            return (new StatiqProjectOptions(), false);
-        }
-
-        var root = doc.RootElement;
-        if (root.ValueKind != JsonValueKind.Object) return (new StatiqProjectOptions(), false);
-
-        if (!root.TryGetProperty("StatiqProject", out var sp) || sp.ValueKind != JsonValueKind.Object)
-            return (new StatiqProjectOptions(), false);
-
-        // v2 already — deserialise, then backfill Watermark on any
-        // project that's still on the pre-v3 default of "".
-        if (sp.TryGetProperty("Projects", out _))
-        {
-            var opts = JsonSerializer.Deserialize<StatiqProjectOptions>(sp.GetRawText()) ?? new();
+            var opts = new StatiqProjectOptions
+            {
+                ActiveProjectName = sp["ActiveProjectName"] ?? "",
+                Projects = projectsSection.Get<List<StatiqProjectEntry>>() ?? new(),
+            };
             var anyMissing = opts.Projects.Any(p => string.IsNullOrEmpty(p.Watermark));
             if (anyMissing)
             {
@@ -82,17 +82,50 @@ public class SettingsService
                 foreach (var p in opts.Projects)
                     if (string.IsNullOrEmpty(p.Watermark))
                         p.Watermark = DefaultWatermarkFor(p.Name);
-                await PersistAsync(root, opts);
+                await PersistAsync(opts);
                 _configRoot.Reload();
                 return (opts, true);
             }
             return (opts, false);
         }
 
+        // v1 shape (single Root, no Projects) — only detectable from
+        // the committed skeleton file, since env-specific overrides
+        // never carry a v1 shape. Read the file to find it.
+        var root = await ReadDiskRootAsync();
+        if (root.ValueKind != JsonValueKind.Object) return (new StatiqProjectOptions(), false);
+        if (!root.TryGetProperty("StatiqProject", out var diskSp) || diskSp.ValueKind != JsonValueKind.Object)
+            return (new StatiqProjectOptions(), false);
+        if (diskSp.TryGetProperty("Projects", out _) || !diskSp.TryGetProperty("Root", out _))
+            return (new StatiqProjectOptions(), false);
+
         // v1 detected. Migrate to v2 in place, then re-read.
         _log.LogInformation("Detected v1 single-project config — migrating to multi-project v2");
         var migrated = await MigrateV1ToV2Async(root);
         return (migrated, true);
+    }
+
+    /// <summary>
+    /// Read the on-disk <c>appsettings.json</c> as a JsonElement so
+    /// callers that need to preserve non-StatiqProject top-level keys
+    /// (Logging, AllowedHosts, etc.) can pass it to <see cref="PersistAsync"/>.
+    /// Returns a default (empty) JsonElement if the file is missing or
+    /// unreadable — the merge step will then write a fresh file with
+    /// just the StatiqProject section.
+    /// </summary>
+    private async Task<JsonElement> ReadDiskRootAsync()
+    {
+        if (!File.Exists(ConfigPath)) return default;
+        try
+        {
+            using var doc = JsonDocument.Parse(await File.ReadAllTextAsync(ConfigPath, Encoding.UTF8));
+            // Clone the root so it survives `doc` being disposed.
+            return doc.RootElement.Clone();
+        }
+        catch
+        {
+            return default;
+        }
     }
 
     /// <summary>
@@ -188,7 +221,7 @@ public class SettingsService
             ActiveProjectName = "CoderBlog",
         };
 
-        await PersistAsync(root, v2);
+        await PersistAsync(v2);
         _configRoot.Reload();
         return v2;
     }
@@ -246,7 +279,7 @@ public class SettingsService
                 catch { /* fall through with default */ }
             }
 
-            await PersistAsync(existing, v2);
+            await PersistAsync(v2);
             _configRoot.Reload();
             _log.LogInformation("Updated {Path}; {Count} project(s), active={Active}",
                 ConfigPath, deduped.Count, activeName);
@@ -277,13 +310,7 @@ public class SettingsService
                 return (false, $"Unknown project: {name}");
 
             current.ActiveProjectName = name;
-            JsonElement existing = default;
-            if (File.Exists(ConfigPath))
-            {
-                try { existing = JsonDocument.Parse(await File.ReadAllTextAsync(ConfigPath, Encoding.UTF8)).RootElement; }
-                catch { }
-            }
-            await PersistAsync(existing, current);
+            await PersistAsync(current);
             _configRoot.Reload();
             return (true, null);
         }
@@ -301,8 +328,36 @@ public class SettingsService
     //  Helpers
     // ----------------------------------------------------------------
 
-    private async Task PersistAsync(JsonElement existingRoot, StatiqProjectOptions v2)
+    /// <summary>
+    /// The file we should actually write to when persisting config. In
+    /// the default case (no env-specific override) this is just
+    /// <c>appsettings.json</c>. But when the user keeps their real
+    /// config in <c>appsettings.{Environment}.json</c> (the privacy
+    /// refactor pattern), writing to <c>appsettings.json</c> would be
+    /// silently shadowed by the env-specific file and the change would
+    /// never take effect — so we write to the env file instead. Either
+    /// way, the on-disk file we choose to write becomes the most
+    /// specific source, winning the merge.
+    /// </summary>
+    private string GetEffectiveConfigPath()
     {
+        var envName = _env.EnvironmentName;
+        if (!string.IsNullOrEmpty(envName))
+        {
+            var envPath = Path.Combine(_env.ContentRootPath, $"appsettings.{envName}.json");
+            if (File.Exists(envPath)) return envPath;
+        }
+        return ConfigPath;
+    }
+
+    private async Task PersistAsync(StatiqProjectOptions v2)
+    {
+        // Read the file we're about to write to (not always the base
+        // appsettings.json) so we preserve its non-StatiqProject keys.
+        var targetPath = GetEffectiveConfigPath();
+        var existing = await ReadFileRootAsync(targetPath);
+        var dir = Path.GetDirectoryName(targetPath) ?? ".";
+
         using var ms = new MemoryStream();
         using (var w = new Utf8JsonWriter(ms, new JsonWriterOptions
         {
@@ -313,9 +368,9 @@ public class SettingsService
             w.WriteStartObject();
 
             // Preserve unrelated top-level keys (Logging, AllowedHosts, …)
-            if (existingRoot.ValueKind == JsonValueKind.Object)
+            if (existing.ValueKind == JsonValueKind.Object)
             {
-                foreach (var prop in existingRoot.EnumerateObject())
+                foreach (var prop in existing.EnumerateObject())
                 {
                     if (string.Equals(prop.Name, "StatiqProject", StringComparison.Ordinal))
                         continue;
@@ -345,11 +400,26 @@ public class SettingsService
             w.WriteEndObject();
         }
 
-        var tmp = ConfigPath + ".tmp";
+        var tmp = targetPath + ".tmp";
         var bytes = ms.ToArray();
         var text = new UTF8Encoding(false).GetString(bytes).TrimEnd('\r', '\n') + "\n";
         await File.WriteAllTextAsync(tmp, text, new UTF8Encoding(false));
-        File.Move(tmp, ConfigPath, overwrite: true);
+        File.Move(tmp, targetPath, overwrite: true);
+        _log.LogInformation("Persisted config to {Path}", targetPath);
+    }
+
+    private static async Task<JsonElement> ReadFileRootAsync(string path)
+    {
+        if (!File.Exists(path)) return default;
+        try
+        {
+            using var doc = JsonDocument.Parse(await File.ReadAllTextAsync(path, Encoding.UTF8));
+            return doc.RootElement.Clone();
+        }
+        catch
+        {
+            return default;
+        }
     }
 
     private static string GetStr(JsonElement obj, string key, string fallback = "")

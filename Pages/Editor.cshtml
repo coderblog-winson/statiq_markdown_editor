@@ -59,16 +59,6 @@
             <span class="dirty-indicator" id="dirty-indicator" hidden>● unsaved</span>
             <button type="button" class="btn btn-ghost" id="discard-btn" hidden>Discard</button>
             <span class="tb-sep" aria-hidden="true"></span>
-            <button type="button" class="btn btn-ghost" id="preview-btn"
-                    title="Run the preview script (configured in Settings) — builds the site and starts a local HTTP server"
-                    aria-label="Preview">
-                <span aria-hidden="true">▶</span> Preview
-            </button>
-            <button type="button" class="btn btn-ghost" id="deploy-btn"
-                    title="Run the deploy script (configured in Settings) — builds the site and publishes it"
-                    aria-label="Deploy">
-                <span aria-hidden="true">↑</span> Deploy
-            </button>
             <button type="button" class="btn btn-primary" id="save-btn" disabled>Save</button>
         </div>
     </div>
@@ -117,29 +107,6 @@
             <span id="statusbar-left">Ready</span>
             <span id="statusbar-right"></span>
         </div>
-    </div>
-</div>
-
-<!-- Script output modal: shows the live log of preview.sh / build_deploy.sh
-     runs, polls /api/scripts/{action}/{log,status} once a second, and offers
-     a "Stop" button for the long-lived preview server. -->
-<div class="modal" id="script-modal" hidden>
-    <div class="modal-backdrop" data-script-close></div>
-    <div class="modal-panel script-panel">
-        <header class="modal-header">
-            <h2 id="script-modal-title">Preview</h2>
-            <span id="script-modal-status" class="script-status status-idle">idle</span>
-            <button type="button" class="modal-close" data-script-close aria-label="Close">×</button>
-        </header>
-        <div class="modal-body script-body">
-            <pre id="script-log" class="script-log" aria-live="polite"></pre>
-        </div>
-        <footer class="modal-footer">
-            <a id="script-open-link" href="#" target="_blank" rel="noopener" class="btn btn-ghost" hidden>Open preview ↗</a>
-            <button type="button" class="btn btn-ghost" id="script-stop-btn" hidden>Stop</button>
-            <span class="spacer"></span>
-            <button type="button" class="btn btn-ghost" data-script-close>Close</button>
-        </footer>
     </div>
 </div>
 
