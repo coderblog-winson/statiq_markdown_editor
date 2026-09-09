@@ -13,3 +13,9 @@ obj/
 appsettings.Development.json
 appsettings.Production.json
 appsettings.Local.json
+
+# Electron + npm
+node_modules/
+dist/
+*.dmg
+

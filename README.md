@@ -183,3 +183,31 @@ All endpoints under `/api/`:
 - Filename rename only — does not touch the frontmatter `Title` or URL slug.
 - HTML→markdown conversion uses Turndown defaults. Complex Medium-specific
   embeds (tweets, code blocks with custom containers) may not convert perfectly.
+
+## Building a Mac .app (double-click to launch)
+
+```bash
+npm install            # one-time: installs Electron
+npm run build:mac      # produces dist/Statiq Markdown Editor.app
+open "dist/Statiq Markdown Editor.app"
+```
+
+The resulting .app is a self-contained Mac application — no .NET SDK
+or `dotnet run` needed. Double-clicking it spawns the editor UI.
+
+What's inside:
+- `Contents/MacOS/Electron` — the Electron host binary
+- `Contents/Resources/app/` — our main.js + package.json
+- `Contents/Resources/server/` — self-contained .NET 9 runtime
+  + wwwroot + appsettings.json (single `StatiqMarkdownEditor` binary, 106MB)
+
+First launch (unsigned): macOS Gatekeeper will block the unsigned
+.app. Right-click the .app → **Open** → **Open** to bypass.
+
+To install to /Applications:
+```bash
+cp -R "dist/Statiq Markdown Editor.app" /Applications/
+```
+
+For development, prefer `dotnet run` (port 5070) — it's faster to
+iterate than rebuilding the .app.

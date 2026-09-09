@@ -1,0 +1,44 @@
+{
+  "name": "statiq-markdown-editor",
+  "version": "1.0.0",
+  "description": "Markdown editor for Statiq static-site projects (Electron shell + ASP.NET Core backend).",
+  "private": true,
+  "main": "electron/main.js",
+  "scripts": {
+    "publish:server": "dotnet publish Editor.csproj -c Release -r osx-arm64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o ./dist/server",
+    "start": "npm run publish:server && electron .",
+    "package:mac": "npm run publish:server && electron-builder --mac --arm64 --publish never",
+    "package:mac-dmg": "npm run publish:server && electron-builder --mac --arm64 dmg --publish never"
+  },
+  "devDependencies": {
+    "electron": "^32.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.winsonet.statiq-markdown-editor",
+    "productName": "Statiq Markdown Editor",
+    "directories": {
+      "output": "dist/mac"
+    },
+    "files": [
+      "electron/**/*",
+      "dist/server/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "dist/server/StatiqMarkdownEditor",
+        "to": "server/StatiqMarkdownEditor"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        { "target": "dir", "arch": ["arm64"] }
+      ],
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "identity": null
+    }
+  }
+}
