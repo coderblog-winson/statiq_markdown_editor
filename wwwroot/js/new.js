@@ -134,7 +134,7 @@
                 els.slugHint.textContent = 'Title contains CJK characters. Please enter an ASCII slug (lowercase, dashes) so the file name and URL stay clean.';
             } else if (!SLUG_REGEX.test(slug)) {
                 els.slugHint.className = 'field-hint warn';
-                els.slugHint.textContent = 'Slug must be lowercase ASCII letters, digits, and dashes.';
+                els.slugHint.textContent = 'Slug: only a-z, 0-9 and single dashes are allowed. No underscores, spaces, or consecutive dashes. Example: my-post-title';
             } else {
                 els.slugHint.className = 'field-hint ok';
                 els.slugHint.textContent = 'Will become: ' + slug + '.md';
@@ -147,7 +147,7 @@
             if (slug) {
                 if (!SLUG_REGEX.test(slug)) {
                     els.slugHint.className = 'field-hint warn';
-                    els.slugHint.textContent = 'Custom slug must be lowercase ASCII letters, digits, and dashes.';
+                    els.slugHint.textContent = 'Custom slug: only a-z, 0-9 and single dashes. No underscores, spaces, or consecutive dashes.';
                 } else {
                     els.slugHint.className = 'field-hint ok';
                     els.slugHint.textContent = 'Custom slug — the year suffix will NOT be added.';
@@ -196,7 +196,7 @@
             problem = 'Title contains CJK characters — please enter an English slug so the file name and URL are valid.';
         }
         else if (slug && !SLUG_REGEX.test(slug)) {
-            problem = 'Slug must be lowercase ASCII letters, digits, and dashes (kebab-case).';
+            problem = 'Slug may only contain a-z, 0-9 and single dashes (kebab-case). Underscores, spaces, and consecutive dashes are not allowed.';
         }
 
         if (problem) {
