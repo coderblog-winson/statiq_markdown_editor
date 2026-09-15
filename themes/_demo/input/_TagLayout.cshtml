@@ -1,0 +1,24 @@
+@*
+  _TagLayout.cshtml — used by the "Tags" pipeline (GroupDocuments("Tags")).
+  Renders one page per tag with the list of posts under that tag.
+*@
+@using Statiq.Common
+@{
+    Layout = "_Layout.cshtml";
+    var groupKey = Document?.GetString(Keys.GroupKey) ?? "Tag";
+    // Document?.GetChildren() returns DocumentList<IDocument>? — use null-coalescing
+    // with a new empty DocumentList (not IDocument[]) to keep the types aligned.
+    var docs = Document?.GetChildren() ?? DocumentList<IDocument>.Empty;
+}
+<section class="tag-page">
+    <h2>Tag: @groupKey</h2>
+    <ul>
+        @foreach (var d in docs)
+        {
+            var t = d.GetString("Title") ?? (d.Source.IsNull ? "" : d.Source.FileNameWithoutExtension.ToString());
+            if (string.IsNullOrEmpty(t)) t = "Untitled";
+            var link = d.GetLink();
+            <li><a href="@link">@t</a></li>
+        }
+    </ul>
+</section>

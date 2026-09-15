@@ -1,5 +1,4 @@
 using System.Text.RegularExpressions;
-using Microsoft.Extensions.Options;
 using SixLabors.Fonts;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Drawing.Processing;
@@ -11,41 +10,53 @@ namespace StatiqMarkdownEditor.Services;
 
 /// <summary>
 /// Receives an uploaded image (any format ImageSharp can decode), converts it to
-/// WebP, and writes it under {Root}/{ImagesSubdir}/{YYYY-MM}/. The target month
-/// comes from the post's frontmatter Date when available, otherwise the upload
-/// time.
+/// WebP, and writes it under <c>sites/&lt;active&gt;/input/images/{YYYY-MM}/</c>.
+/// The target month comes from the post's frontmatter Date when available,
+/// otherwise the upload time.
 ///
-/// If the active project has a non-empty <c>Watermark</c> field, the text is
-/// drawn in the bottom-right corner of the image before WebP encoding. The
-/// watermark is sized proportionally to the image width, uses a bold sans
-/// font, and has a subtle dark drop shadow for legibility on light
-/// backgrounds. The font is resolved from a short list of system paths
-/// (Helvetica on macOS, Arial Bold on Windows, DejaVu on Linux) so the
-/// service works out of the box on all three platforms without bundling a
-/// font file.
+/// Watermarking is wired up but disabled by default: the per-site
+/// <c>Watermark</c> field lives on <see cref="SiteConfig"/> and is empty
+/// unless the user opts in. When non-empty, the text is drawn bottom-right
+/// in white bold sans-serif with a subtle dark drop shadow. Font is
+/// resolved from a short list of system paths (Helvetica on macOS,
+/// Arial Bold on Windows, DejaVu on Linux) — no font file bundled.
 /// </summary>
 public class ImageService
 {
-    private readonly IOptionsMonitor<StatiqProjectOptions> _opt;
+    private readonly StatiqRunner _runner;
     private readonly ILogger<ImageService> _log;
 
     /// <summary>Hard cap to keep one paste from blowing up memory.</summary>
     public const long MaxBytes = 25 * 1024 * 1024; // 25 MB
 
-    public ImageService(IOptionsMonitor<StatiqProjectOptions> opt, ILogger<ImageService> log)
+    public ImageService(StatiqRunner runner, ILogger<ImageService> log)
     {
-        _opt = opt;
+        _runner = runner;
         _log = log;
     }
-
-    private StatiqProjectOptions CurrentOpt => _opt.CurrentValue;
 
     private string ImagesRoot
     {
         get
         {
-            var p = CurrentOpt.Active;
-            return string.IsNullOrEmpty(p.Root) ? string.Empty : Path.Combine(p.Root, p.ImagesSubdir);
+            var paths = _runner.GetActiveSitePathsSync();
+            if (paths == null) return string.Empty;
+            return Path.Combine(paths.InputDir, "images");
+        }
+    }
+
+    /// <summary>
+    /// Per-site watermark text. Empty = no watermark. Reads from the active
+    /// site's <c>config.json</c> if it has a <c>Watermark</c> field.
+    /// </summary>
+    private string Watermark
+    {
+        get
+        {
+            var paths = _runner.GetActiveSitePathsSync();
+            // SiteConfig doesn't yet expose Watermark — when it does,
+            // read it here. Until then: no watermark.
+            return string.Empty;
         }
     }
 
@@ -54,8 +65,8 @@ public class ImageService
     {
         if (sizeBytes > MaxBytes)
             return (false, null, $"file too large ({sizeBytes / 1024 / 1024} MB; max {MaxBytes / 1024 / 1024} MB)");
-        if (string.IsNullOrEmpty(CurrentOpt.Active.Root) || string.IsNullOrEmpty(ImagesRoot))
-            return (false, null, "Statiq project root is not configured");
+        if (string.IsNullOrEmpty(ImagesRoot))
+            return (false, null, "no active site — pick one in Settings");
 
         var targetMonth = (postDate ?? DateTime.Today);
         var yearMonth = targetMonth.ToString("yyyy-MM");
@@ -93,8 +104,8 @@ public class ImageService
 
         // Pull watermark up front so we can decide whether to draw before
         // any expensive work. Empty watermark = no draw (cheaper + correct
-        // for projects that opt out).
-        var watermark = CurrentOpt.Active.Watermark?.Trim() ?? string.Empty;
+        // for sites that opt out).
+        var watermark = Watermark.Trim();
         var drawWatermark = !string.IsNullOrEmpty(watermark);
         Font? wmFont = null;
         if (drawWatermark)
@@ -135,14 +146,12 @@ public class ImageService
             _log.LogInformation("Saved {Path} ({Bytes} bytes from {Source}, watermark={Wm})",
                 fullPath, savedSize, suggestedName, drawWatermark ? watermark : "(none)");
 
-            // The URL the markdown references must match what the Statiq project
-            // emits at build time. The convention is to drop the "input/" prefix
-            // so `input/images/2026-09/foo.webp` becomes `/images/2026-09/foo.webp`
-            // in the published HTML. Coderblog and most Statiq themes follow this.
-            var urlSubdir = CurrentOpt.Active.ImagesSubdir.Replace('\\', '/');
-            if (urlSubdir.StartsWith("input/", StringComparison.OrdinalIgnoreCase))
-                urlSubdir = urlSubdir.Substring("input/".Length);
-            urlSubdir = urlSubdir.Trim('/');
+            // The URL the markdown references must match what Statiq emits
+            // at build time. Convention: drop the "input/" prefix so
+            // `input/images/2026-09/foo.webp` becomes `/images/2026-09/foo.webp`
+            // in the published HTML. Coderblog, alphaLedger, and most
+            // themes follow this.
+            const string urlSubdir = "images";
 
             return (true, new ImageUploadResponse
             {

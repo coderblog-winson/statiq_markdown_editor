@@ -1,0 +1,25 @@
+@*
+  _PostLayout.cshtml — used for posts/*.md via the Content pipeline's
+  default mapping (post files get layout=post via frontmatter or naming).
+  For demo purposes, just wraps the body in an <article>.
+*@
+@{
+    Layout = "_Layout.cshtml";
+    var title = (string)(Document?.GetString("Title") ?? "Untitled");
+    var date  = Document?.Get<DateTime?>("Date");
+    var tags  = Document?.GetList<string>("Tags") ?? new List<string>();
+}
+<article>
+    <h2>@title</h2>
+    @if (date.HasValue)
+    {
+        <p class="meta"><time datetime="@date.Value.ToString("yyyy-MM-dd")">@date.Value.ToString("yyyy-MM-dd")</time></p>
+    }
+    <div class="content">
+        @RenderBody()
+    </div>
+    @if (tags.Count > 0)
+    {
+        <p class="tags">Tags: @string.Join(", ", tags)</p>
+    }
+</article>

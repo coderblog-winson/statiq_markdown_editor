@@ -7,12 +7,34 @@
     <RootNamespace>StatiqMarkdownEditor</RootNamespace>
     <AssemblyName>StatiqMarkdownEditor</AssemblyName>
     <InvariantGlobalization>true</InvariantGlobalization>
+
+    <!-- themes/ and sites/ hold Razor templates + content for the embedded
+         Statiq.Web engine. Don't compile them with the editor's Razor view
+         engine (they use Statiq's IDocument API, not the editor's).
+         Pages/ + wwwroot/ are the editor's own Razor Pages — those DO need
+         compile-time Razor compilation, so they stay enabled.
+         DefaultItemExcludes skips themes/sites from the default include glob.
+         Note: paths use FORWARD slashes — backslashes are Windows-only and
+         silently fail on macOS/Linux. -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);themes/**;sites/**</DefaultItemExcludes>
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Statiq.Web" Version="1.0.0-beta.60" />
     <PackageReference Include="YamlDotNet" Version="15.1.6" />
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.5" />
     <PackageReference Include="SixLabors.ImageSharp.Drawing" Version="2.1.4" />
+  </ItemGroup>
+
+  <!-- Exclude themes/ and sites/ from Razor compilation (Statiq's templates
+       use IDocument, not the editor's Razor view model) but keep them as
+       runtime content so the editor's embedded Bootstrapper can find them.
+       Paths use forward slashes — backslashes silently no-op on macOS/Linux. -->
+  <ItemGroup>
+    <RazorPage Remove="themes/**" />
+    <RazorPage Remove="sites/**" />
+    <None Include="themes/**" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="sites/**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

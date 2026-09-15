@@ -1,0 +1,7 @@
+{
+  "Theme": "themes/_demo",
+  "Host": "demo.local",
+  "StripMonthFromPostUrls": true,
+  "FigureStyle": "custom-figure",
+  "UseHtmlExtensions": true
+}

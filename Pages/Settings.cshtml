@@ -9,85 +9,33 @@
 
 <section class="settings-page">
     <h1>Settings</h1>
-    <p class="muted">List every Statiq project you work on (one per line: <code>Name | /path | watermark</code>).
-        Pick the active project from the top-nav dropdown. Changes save to <code>appsettings.json</code> and take
-        effect immediately — no restart needed.</p>
+    <p class="muted">
+        Each site lives in its own folder under <code>sites/&lt;name&gt;/</code> with a
+        <code>config.json</code> describing the theme, host, analytics IDs, and so on.
+        Sites are auto-discovered — to add a new one, drop a new folder under
+        <code>sites/</code> and reload this page.
+    </p>
 
-    <form id="settings-form" class="settings-form" autocomplete="off">
+    <h2 class="section-title">Active site</h2>
+    <p class="muted">
+        The editor reads posts and images from the active site's
+        <code>input/posts/</code> and <code>input/images/</code>. Pick one below.
+        The choice is persisted to <code>appsettings.json</code> (or its env-specific
+        override).
+    </p>
 
-        <label>
-            <span>Projects <em>(one per line, format: <code>Name | /absolute/path | watermark</code> — watermark optional)</em></span>
-            <textarea name="projects" id="projects-field" rows="6" spellcheck="false"
-                      placeholder="CoderBlog | /Volumes/Software/MyWebSites/Coderblog.in/coderblog.statiq | Coderblog.In&#10;WinsonInvest | /Volumes/Software/MyWebSites/WinsonInvest.com/winsoninvest.statiq/winsoninvest.statiq | Winsoninvest.com&#10;Tableware | /Volumes/Software/MyWebSites/Tableware.com/tableware.statiq/tableware.statiq.site | Tableware.com"></textarea>
-            <span class="field-hint" id="projects-hint"></span>
-        </label>
-
-        <div id="project-cards" class="project-cards"></div>
-
-        <h2 class="section-title">Active project</h2>
-        <p class="muted" id="active-name">Pick a project to edit its details.</p>
-
-        <div id="active-panel" hidden>
-            <label>
-                <span>Content subdir <em>(relative to root)</em></span>
-                <input type="text" name="contentSubdir" maxlength="200" placeholder="input/posts" />
-            </label>
-            <label>
-                <span>Images subdir <em>(relative to root)</em></span>
-                <input type="text" name="imagesSubdir" maxlength="200" placeholder="input/images" />
-            </label>
-
-            <h3 class="section-title">Build scripts <em>(paths relative to root — leave blank to disable)</em></h3>
-            <label>
-                <span>Preview script</span>
-                <input type="text" name="previewScriptPath" maxlength="200" placeholder="preview.sh" />
-                <span class="field-hint" id="preview-status"></span>
-            </label>
-            <label>
-                <span>Deploy script</span>
-                <input type="text" name="deployScriptPath" maxlength="200" placeholder="build_deploy.sh" />
-                <span class="field-hint" id="deploy-status"></span>
-            </label>
-
-            <label class="inline-label">
-                <span>Preview server port <em>(passed to preview.sh as $1)</em></span>
-                <input type="number" name="previewPort" min="1" max="65535" placeholder="5080" />
-            </label>
-
-            <h3 class="section-title">Image watermark <em>(drawn bottom-right on every uploaded image — leave blank to skip)</em></h3>
-            <label>
-                <span>Watermark text</span>
-                <input type="text" name="watermark" maxlength="80" placeholder="e.g. WinsonInvest.com" />
-                <span class="field-hint muted">e.g. "Coderblog.In" / "Winsoninvest.com" / "Tableware.com". Applied on upload + paste.</span>
-            </label>
-
-            <div class="resolved-paths" id="resolved-paths" hidden>
-                <h3>Resolved paths</h3>
-                <dl>
-                    <dt>Posts directory</dt>
-                    <dd><code id="full-content"></code></dd>
-                    <dt>Images directory</dt>
-                    <dd><code id="full-images"></code></dd>
-                </dl>
-            </div>
-        </div>
-
-        <div class="form-actions">
-            <button type="button" class="btn btn-ghost" id="reset-btn">Reset</button>
-            <button type="submit" class="btn btn-primary" id="save-btn">Save</button>
-        </div>
-    </form>
+    <div id="sites-list" class="sites-list">
+        <p class="muted" id="sites-loading">Loading sites…</p>
+    </div>
 
     <details class="settings-help">
         <summary>How it works</summary>
         <ul>
-            <li>Each project lives at its own <code>Root</code> path and has its own <code>ContentSubdir</code>, <code>ImagesSubdir</code>, preview/deploy scripts, preview port, and watermark text.</li>
-            <li>Use the dropdown in the top nav to switch which project the editor / list / preview / deploy buttons act on.</li>
-            <li>Script paths are stored <strong>relative to the project root</strong> so a project tree is self-contained — copy the folder and the config still works.</li>
-            <li>Path safety: any path that tries to escape the active project's content root is rejected (returns 404).</li>
+            <li>Sites are discovered from <code>sites/&lt;name&gt;/config.json</code>. The directory name is the site slug.</li>
+            <li>Per-site settings (theme, host, Umami/GA IDs, content layout toggles) live in each <code>config.json</code>. To edit them, open the file directly.</li>
+            <li>The active site is the single mutable state. Click <strong>Activate</strong> on a card to switch.</li>
             <li>Frontmatter is parsed and re-emitted with a stable key order (Title, Description, Date, Layout, Image, Category, Draft, Tags) so diffs stay clean.</li>
-            <li>Watermark is rendered with ImageSharp.Drawing: white bold sans-serif, bottom-right, with a subtle dark drop shadow. Font is resolved from system fonts (Helvetica on macOS, Arial Bold on Windows, DejaVu Bold on Linux) — no font file bundled.</li>
-            <li>After saving, the running app reloads the config. No restart needed.</li>
+            <li>Watermarks + image uploads are scoped to the active site. Theme pages live in <code>themes/&lt;name&gt;/</code> or <code>themes/&lt;name&gt;/input/</code> — each site renders against its own theme.</li>
         </ul>
     </details>
 </section>

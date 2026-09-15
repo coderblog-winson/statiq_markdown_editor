@@ -2,6 +2,7 @@ using Microsoft.Extensions.Options;
 using StatiqMarkdownEditor.Models;
 using StatiqMarkdownEditor.Pages;
 using StatiqMarkdownEditor.Services;
+using SME.Statiq;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -12,6 +13,7 @@ builder.Services.AddSingleton<FrontmatterService>();
 builder.Services.AddSingleton<MarkdownFileService>();
 builder.Services.AddSingleton<ImageService>();
 builder.Services.AddSingleton<SettingsService>();
+builder.Services.AddSingleton<StatiqRunner>();
 builder.Services.AddSingleton<ScriptRunnerService>();
 
 var app = builder.Build();
@@ -28,14 +30,9 @@ app.UseStatusCodePages("text/plain", "Status: {0}");
 
 // ---------- Minimal API: posts ----------
 //
-// Paginated list. Query params:
-//   page     — 1-based page number (default 1)
-//   pageSize — items per page (default 12, capped at 100)
-//   category — exact-match filter
-//   q        — case-insensitive title/filename substring filter
-//
-// Response shape:
-//   { items: PostSummary[], total, page, pageSize, totalPages }
+// All file-IO endpoints are scoped to the currently-active site, which
+// MarkdownFileService / ImageService resolve via StatiqRunner.GetActiveSitePathsSync.
+// Switch the active site via /api/projects/activate.
 app.MapGet("/api/posts", (HttpContext ctx, MarkdownFileService svc) =>
 {
     var q = ctx.Request.Query;
@@ -121,18 +118,15 @@ app.MapPost("/api/posts/rename", (HttpContext ctx, RenameRequest body, MarkdownF
 app.MapGet("/api/categories", (MarkdownFileService svc) => Results.Ok(svc.ListCategories()));
 
 // Serve image files under /images/{*path} by reading them directly from
-// the Statiq project's input/images/ directory. This lets the live preview
-// pane render <img src="/images/2026-09/foo.webp"> without needing a
-// Statiq build step. The handler reads the current Root from
-// IOptionsMonitor so changes to Settings take effect immediately.
-app.MapGet("/images/{*path}", (string path, IOptionsMonitor<StatiqProjectOptions> opt) =>
+// the active site's input/images/ directory. This lets the live preview
+// pane render <img src="/images/2026-09/foo.webp"> without a Statiq build.
+app.MapGet("/images/{*path}", (string path, StatiqRunner runner) =>
 {
     if (string.IsNullOrEmpty(path)) return Results.BadRequest(new { error = "path required" });
-    var o = opt.CurrentValue.Active;
-    if (string.IsNullOrEmpty(o.Root)) return Results.NotFound();
-    // Defensive normalisation
+    var paths = runner.GetActiveSitePathsSync();
+    if (paths == null) return Results.NotFound();
     var trimmed = path.TrimStart('/');
-    var imagesRoot = Path.Combine(o.Root, o.ImagesSubdir ?? "input/images");
+    var imagesRoot = Path.Combine(paths.InputDir, "images");
     var full = Path.GetFullPath(Path.Combine(imagesRoot, trimmed.Replace('/', Path.DirectorySeparatorChar)));
     var rootFull = Path.GetFullPath(imagesRoot);
     if (!full.StartsWith(rootFull + Path.DirectorySeparatorChar, StringComparison.Ordinal)
@@ -190,61 +184,26 @@ app.MapPut("/api/images", async (HttpRequest req, ImageService imgSvc) =>
     return ok ? Results.Ok(resp) : Results.BadRequest(new { error = err });
 });
 
-app.MapGet("/api/settings", async (IOptionsMonitor<StatiqProjectOptions> opt, SettingsService svc) =>
+// ---------- Settings ----------
+//
+// The settings page is now read-only: sites are auto-discovered from
+// sites/<name>/config.json. The only stateful thing the user controls
+// is which site is active. ListSites + active = the entire /api/settings
+// response. /api/projects/activate writes to appsettings[.Development].json.
+app.MapGet("/api/settings", (StatiqRunner runner, SettingsService svc) =>
 {
-    // Trigger a v1→v2 migration if needed (one-time, idempotent).
-    var (loaded, migrated) = await svc.LoadAsync();
-    if (migrated)
-    {
-        // LoadAsync reloaded the config root; re-read so the response
-        // matches what other consumers (MarkdownFileService, etc.) will see.
-    }
-    var o = opt.CurrentValue;
-    var active = o.Active;
-    var actualRoot = Directory.Exists(active.Root) ? active.Root : null;
+    var activeName = svc.GetActiveProjectName();
+    var sites = runner.ListSites()
+        .Select(n => DescribeSite(runner, n))
+        .ToList();
     return Results.Ok(new
     {
-        projects = o.Projects.Select(p => new
-        {
-            name = p.Name,
-            root = p.Root,
-            rootExists = Directory.Exists(p.Root),
-            contentSubdir = p.ContentSubdir,
-            imagesSubdir = p.ImagesSubdir,
-            previewScriptPath = p.PreviewScriptPath,
-            deployScriptPath = p.DeployScriptPath,
-            previewPort = p.PreviewPort,
-            watermark = p.Watermark,
-        }),
-        activeProjectName = o.ActiveProjectName,
-        migrated = migrated,
-        // The "active project" view (used by editor + list pages).
-        active = new
-        {
-            name = active.Name,
-            root = active.Root,
-            rootExists = actualRoot is not null,
-            contentSubdir = active.ContentSubdir,
-            imagesSubdir = active.ImagesSubdir,
-            fullContentPath = actualRoot is null ? null : Path.Combine(actualRoot, active.ContentSubdir),
-            fullImagesPath = actualRoot is null ? null : Path.Combine(actualRoot, active.ImagesSubdir),
-            previewScriptPath = active.PreviewScriptPath,
-            deployScriptPath = active.DeployScriptPath,
-            previewPort = active.PreviewPort,
-            watermark = active.Watermark,
-        },
+        sites,
+        activeProjectName = activeName,
     });
 });
 
-app.MapPut("/api/settings", async (SettingsUpdateRequest body, SettingsService svc) =>
-{
-    if (body is null) return Results.BadRequest(new { error = "body required" });
-    var (ok, err) = await svc.UpdateAsync(body);
-    return ok ? Results.Ok(new { ok = true }) : Results.BadRequest(new { error = err });
-});
-
-// Lightweight "switch project" endpoint. The top-nav dropdown hits this
-// instead of round-tripping the whole settings payload on every click.
+// Lightweight "switch active site" endpoint.
 app.MapPost("/api/projects/activate", async (HttpContext ctx, SettingsService svc) =>
 {
     var body = await ctx.Request.ReadFromJsonAsync<ActivateProjectRequest>();
@@ -254,101 +213,159 @@ app.MapPost("/api/projects/activate", async (HttpContext ctx, SettingsService sv
     return ok ? Results.Ok(new { ok = true }) : Results.BadRequest(new { error = err });
 });
 
-app.MapGet("/api/projects", (IOptionsMonitor<StatiqProjectOptions> opt) =>
+// Lightweight dropdown list (used by _Layout.cshtml's header dropdown).
+app.MapGet("/api/projects", (StatiqRunner runner, SettingsService svc) =>
 {
-    var o = opt.CurrentValue;
+    var sites = runner.ListSites().Select(n => new { name = n }).ToList();
     return Results.Ok(new
     {
-        projects = o.Projects.Select(p => new { name = p.Name, root = p.Root }),
-        activeProjectName = o.ActiveProjectName,
+        sites,
+        activeProjectName = svc.GetActiveProjectName(),
     });
 });
 
-// ---------- Script runner (Preview / Deploy) ----------
+// ---------- Editor-managed Statiq sites (in-process Bootstrapper) ----------
 //
-// Two script paths are configured in Settings. The "Preview" script is
-// expected to be a long-lived bash script that builds the site and
-// then starts a local HTTP server — we launch it detached so the
-// server survives the .NET process. The "Deploy" script is a one-shot
-// build+rsync that we track via Process so the UI can show
-// running/done + exit code.
-//
-// In v2 the script paths are stored RELATIVE to the active project's
-// root. We resolve them here (Root + relative path) before handing
-// them to the runner.
-
-static string ResolveScriptPath(StatiqProjectOptions opt, bool preview)
+// These endpoints drive the editor's own copy of Statiq.Web. The site
+// list is whatever lives in sites/<name>/config.json; everything (theme
+// path, host, analytics IDs) is read from there.
+static object DescribeSite(StatiqRunner runner, string name)
 {
-    var p = opt.Active;
-    if (string.IsNullOrEmpty(p.Root)) return "";
-    var rel = preview ? p.PreviewScriptPath : p.DeployScriptPath;
-    if (string.IsNullOrWhiteSpace(rel)) return "";
-    if (Path.IsPathRooted(rel)) return rel; // tolerate absolute paths
-    return Path.Combine(p.Root, rel);
+    try
+    {
+        var cfg = runner.LoadConfigAsync(name).GetAwaiter().GetResult();
+        var paths = cfg.ResolvePaths(runner.EditorRoot);
+        var postsDir = Path.Combine(paths.InputDir, "posts");
+        return new
+        {
+            name,
+            theme = cfg.Theme,
+            host = cfg.Host,
+            inputExists = Directory.Exists(paths.InputDir),
+            themeExists = Directory.Exists(paths.ThemeDir),
+            outputExists = Directory.Exists(paths.OutputDir),
+            postCount = Directory.Exists(postsDir)
+                ? Directory.EnumerateFiles(postsDir, "*.md", SearchOption.AllDirectories).Count()
+                : 0,
+        };
+    }
+    catch (Exception ex)
+    {
+        return new { name, error = ex.Message };
+    }
 }
 
-app.MapPost("/api/scripts/preview", (IOptionsMonitor<StatiqProjectOptions> opt, ScriptRunnerService runner) =>
+app.MapGet("/api/sites", (StatiqRunner runner) =>
 {
-    var scriptPath = ResolveScriptPath(opt.CurrentValue, preview: true);
-    var port = opt.CurrentValue.Active.PreviewPort;
-    var (ok, err) = runner.StartPreview(scriptPath, port);
-    if (!ok) return Results.BadRequest(new { error = err });
-    var status = runner.PreviewStatus();
-    return Results.Ok(new { ok = true, port = status.port, logFile = status.logFile });
+    var sites = runner.ListSites().Select(n => DescribeSite(runner, n)).ToList();
+    return Results.Ok(new { sites });
 });
 
-app.MapGet("/api/scripts/preview/status", (ScriptRunnerService runner) =>
+app.MapGet("/api/sites/{name}/config", async (string name, StatiqRunner runner) =>
 {
-    var s = runner.PreviewStatus();
+    try
+    {
+        var cfg = await runner.LoadConfigAsync(name);
+        return Results.Ok(cfg);
+    }
+    catch (FileNotFoundException ex) { return Results.NotFound(new { error = ex.Message }); }
+    catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+
+// In-process build. Synchronous (blocks until Statiq finishes) — the
+// caller polls /api/sites/{name}/build/log for progress, just like the
+// legacy deploy script flow.
+app.MapPost("/api/sites/{name}/build", async (string name, StatiqRunner runner) =>
+{
+    try
+    {
+        var result = await runner.BuildAsync(name);
+        return result.Success
+            ? Results.Ok(new { ok = true, outputDir = result.OutputDir, exitCode = result.ExitCode, lines = result.LogLines.Count })
+            : Results.BadRequest(new { ok = false, error = result.Error ?? "build failed", exitCode = result.ExitCode, log = result.LogLines });
+    }
+    catch (FileNotFoundException ex) { return Results.NotFound(new { error = ex.Message }); }
+    catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+
+// ---------- Per-site sh scripts (Preview / Deploy / Git Sync) ----------
+//
+// These endpoints spawn the per-site sh scripts declared in each site's
+// config.json (PreviewScript / DeployScript / GitSyncScript). The
+// runner is responsible for port recovery (Preview only), stdout/err
+// capture, and exit code tracking.
+
+static async Task<IResult> RunSiteScript(string name, ScriptKind kind, StatiqRunner runner, ScriptRunnerService svc, HttpContext ctx)
+{
+    SiteConfig cfg;
+    try { cfg = await runner.LoadConfigAsync(name); }
+    catch (FileNotFoundException ex) { return Results.NotFound(new { error = ex.Message }); }
+    catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
+
+    var (ok, err, result) = svc.Start(name, kind, cfg);
+    if (!ok) return Results.BadRequest(new { error = err });
     return Results.Ok(new
     {
-        running = s.running,
-        serverReady = s.serverReady,
-        port = s.port,
-        logFile = s.logFile,
-        startedAt = s.startedAt,
+        ok = true,
+        kind = kind.ToString().ToLowerInvariant(),
+        siteName = result!.SiteName,
+        pid = result.Pid,
+        logFile = result.LogFile,
+        port = kind == ScriptKind.Preview ? cfg.PreviewPort : 0,
+        previewUrl = kind == ScriptKind.Preview ? $"http://127.0.0.1:{cfg.PreviewPort}" : null,
+    });
+}
+
+app.MapPost("/api/sites/{name}/preview", (string name, StatiqRunner runner, ScriptRunnerService svc, HttpContext ctx) =>
+    RunSiteScript(name, ScriptKind.Preview, runner, svc, ctx));
+
+app.MapPost("/api/sites/{name}/deploy", (string name, StatiqRunner runner, ScriptRunnerService svc, HttpContext ctx) =>
+    RunSiteScript(name, ScriptKind.Deploy, runner, svc, ctx));
+
+app.MapPost("/api/sites/{name}/git-sync", (string name, StatiqRunner runner, ScriptRunnerService svc, HttpContext ctx) =>
+    RunSiteScript(name, ScriptKind.GitSync, runner, svc, ctx));
+
+app.MapPost("/api/scripts/{kind}/stop", (string kind, ScriptRunnerService svc, StatiqRunner runner) =>
+{
+    if (!Enum.TryParse<ScriptKind>(kind, ignoreCase: true, out var parsed))
+        return Results.BadRequest(new { error = $"unknown script kind: {kind}" });
+    // For Preview stop we also need the cfg to free the port. Look it up
+    // from the currently-running process's site name.
+    var status = svc.Status(parsed);
+    SiteConfig? cfg = null;
+    if (status.Running && !string.IsNullOrEmpty(status.SiteName))
+    {
+        try { cfg = runner.LoadConfigAsync(status.SiteName).GetAwaiter().GetResult(); }
+        catch { /* fall through with null cfg — only affects Preview port cleanup */ }
+    }
+    var (ok, err, killed) = svc.Stop(parsed, cfg);
+    return ok ? Results.Ok(new { ok, killed }) : Results.BadRequest(new { error = err });
+});
+
+app.MapGet("/api/scripts/{kind}/status", (string kind, ScriptRunnerService svc) =>
+{
+    if (!Enum.TryParse<ScriptKind>(kind, ignoreCase: true, out var parsed))
+        return Results.BadRequest(new { error = $"unknown script kind: {kind}" });
+    var s = svc.Status(parsed);
+    return Results.Ok(new
+    {
+        kind = s.Kind.ToString().ToLowerInvariant(),
+        running = s.Running,
+        exitCode = s.ExitCode,
+        pid = s.Pid,
+        siteName = s.SiteName,
+        logFile = s.LogFile,
+        startedAt = s.StartedAt,
     });
 });
 
-app.MapPost("/api/scripts/preview/stop", (ScriptRunnerService runner) =>
+app.MapGet("/api/scripts/{kind}/log", (string kind, HttpContext ctx, ScriptRunnerService svc) =>
 {
-    var (ok, err, killed) = runner.StopPreview();
-    if (!ok) return Results.BadRequest(new { error = err });
-    return Results.Ok(new { ok = true, killed });
-});
-
-app.MapGet("/api/scripts/preview/log", (HttpContext ctx, ScriptRunnerService runner) =>
-{
+    if (!Enum.TryParse<ScriptKind>(kind, ignoreCase: true, out var parsed))
+        return Results.BadRequest(new { error = $"unknown script kind: {kind}" });
     var tail = 500;
-    if (int.TryParse(ctx.Request.Query["tail"], out var t) && t > 0 && t <= 5000) tail = t;
-    return Results.Ok(new { text = runner.ReadLog("preview", tail) });
-});
-
-app.MapPost("/api/scripts/deploy", (IOptionsMonitor<StatiqProjectOptions> opt, ScriptRunnerService runner) =>
-{
-    var scriptPath = ResolveScriptPath(opt.CurrentValue, preview: false);
-    var (ok, err) = runner.StartDeploy(scriptPath);
-    if (!ok) return Results.BadRequest(new { error = err });
-    var s = runner.DeployStatus();
-    return Results.Ok(new { ok = true, logFile = s.logFile });
-});
-
-app.MapGet("/api/scripts/deploy/status", (ScriptRunnerService runner) =>
-{
-    var s = runner.DeployStatus();
-    return Results.Ok(new
-    {
-        running = s.running,
-        exitCode = s.exitCode,
-        logFile = s.logFile,
-    });
-});
-
-app.MapGet("/api/scripts/deploy/log", (HttpContext ctx, ScriptRunnerService runner) =>
-{
-    var tail = 500;
-    if (int.TryParse(ctx.Request.Query["tail"], out var t) && t > 0 && t <= 5000) tail = t;
-    return Results.Ok(new { text = runner.ReadLog("deploy", tail) });
+    if (int.TryParse(ctx.Request.Query["tail"], out var tn) && tn > 0 && tn <= 5000) tail = tn;
+    return Results.Ok(new { text = svc.ReadLog(parsed, tail) });
 });
 
 app.MapRazorPages();

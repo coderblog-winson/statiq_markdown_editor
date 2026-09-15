@@ -57,12 +57,19 @@ RID="osx-$([ "$ARCH" = "arm64" ] && echo arm64 || echo x64)"
 
 echo "==> 1/4 Publishing self-contained .NET binary ($RID)"
 mkdir -p dist
+# Wipe dist/ entirely (NOT just the .app bundle). Any leftover themes/
+# sites/*.cshtml in dist/server/ from a previous build will otherwise
+# be picked up by MSBuild as Razor Pages and fail to compile (they use
+# Statiq's IDocument API, not ASP.NET's). Always build fresh.
+rm -rf "$PROJECT_ROOT/dist"
+# NOTE: do NOT use PublishSingleFile=true. Statiq.Razor's compiler needs
+# CodeBase access on its loaded assemblies, which is unavailable when the
+# runtime is packed into a single-file bundle. So we publish as a folder
+# of DLLs (still self-contained — .NET runtime is bundled, just unpacked).
 dotnet publish "$PROJECT_ROOT/Editor.csproj" \
     -c Release \
     -r "$RID" \
     --self-contained \
-    -p:PublishSingleFile=true \
-    -p:IncludeNativeLibrariesForSelfExtract=true \
     -o "$DOTNET_PUBLISH_DIR" \
     > /tmp/sme-publish.log 2>&1
 if [ ! -f "$DOTNET_PUBLISH_DIR/$DOTNET_EXE_NAME" ]; then
@@ -70,10 +77,9 @@ if [ ! -f "$DOTNET_PUBLISH_DIR/$DOTNET_EXE_NAME" ]; then
     tail -20 /tmp/sme-publish.log
     exit 1
 fi
-echo "    → $(du -h "$DOTNET_PUBLISH_DIR/$DOTNET_EXE_NAME" | cut -f1) self-contained binary"
+echo "    → $(du -sh "$DOTNET_PUBLISH_DIR" | cut -f1) self-contained folder"
 
 echo "==> 2/4 Building .app bundle structure"
-rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_BUNDLE/Contents/MacOS"
 mkdir -p "$APP_BUNDLE/Contents/Resources/app"
 mkdir -p "$APP_BUNDLE/Contents/Resources/server"

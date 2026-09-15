@@ -31,15 +31,32 @@
         </nav>
         <div class="header-right">
             <a href="/api/posts" target="_blank" class="nav-link subtle" title="Open API as JSON">API</a>
+            <span class="nav-site-wrap">
+                <button type="button" class="nav-site" id="site-menu-btn"
+                        title="Active site — click to switch">
+                    <span id="site-label">(no site)</span>
+                </button>
+                <div class="nav-site-menu" id="site-menu" hidden></div>
+            </span>
+            <button type="button" class="nav-link nav-action" id="build-btn"
+                    title="Build the active site in-process (Statiq.Web Bootstrapper) — fast feedback, no script spawn"
+                    aria-label="Build">
+                <span aria-hidden="true">🛠</span> Build
+            </button>
             <button type="button" class="nav-link nav-action" id="preview-btn"
-                    title="Run the preview script (configured in Settings) — builds the site and starts a local HTTP server"
+                    title="Run preview.sh — build + start local HTTP server on the configured port"
                     aria-label="Preview">
                 <span aria-hidden="true">▶</span> Preview
             </button>
             <button type="button" class="nav-link nav-action" id="deploy-btn"
-                    title="Run the deploy script (configured in Settings) — builds the site and publishes it"
+                    title="Run build_deploy.sh — build + rsync to VPS + git-sync"
                     aria-label="Deploy">
                 <span aria-hidden="true">↑</span> Deploy
+            </button>
+            <button type="button" class="nav-link nav-action" id="gitsync-btn"
+                    title="Run git_sync.sh — commit + push current changes to origin"
+                    aria-label="Git Sync">
+                <span aria-hidden="true">⇆</span> Git Sync
             </button>
         </div>
     </header>
@@ -50,15 +67,14 @@
 
     <div id="toast-host" class="toast-host" aria-live="polite"></div>
 
-    <!-- Script output modal: shows the live log of preview.sh / build_deploy.sh
-         runs, polls /api/scripts/{action}/{log,status} once a second, and offers
-         a "Stop" button for the long-lived preview server. Lives in the layout
-         so every page (Posts list, New, Settings, Editor) can drive it. -->
+    <!-- Shared modal for Build / Preview / Deploy / Git Sync.
+         site-builder.js wires up the buttons and streams status/log
+         here. Lives in the layout so every page can drive it. -->
     <div class="modal" id="script-modal" hidden>
         <div class="modal-backdrop" data-script-close></div>
         <div class="modal-panel script-panel">
             <header class="modal-header">
-                <h2 id="script-modal-title">Preview</h2>
+                <h2 id="script-modal-title">Build</h2>
                 <span id="script-modal-status" class="script-status status-idle">idle</span>
                 <button type="button" class="modal-close" data-script-close aria-label="Close">×</button>
             </header>
@@ -66,17 +82,18 @@
                 <pre id="script-log" class="script-log" aria-live="polite"></pre>
             </div>
             <footer class="modal-footer">
-                <a id="script-open-link" href="#" target="_blank" rel="noopener" class="btn btn-ghost" hidden>Open preview ↗</a>
-                <button type="button" class="btn btn-ghost" id="script-stop-btn" hidden>Stop</button>
+                <a id="script-open-link" href="#" target="_blank" rel="noopener" class="btn btn-ghost" hidden>Open output ↗</a>
+                <button type="button" class="btn btn-ghost" id="script-stop-btn" hidden>Stop preview</button>
                 <span class="spacer"></span>
                 <button type="button" class="btn btn-ghost" data-script-close>Close</button>
             </footer>
         </div>
     </div>
 
-    <!-- script-runner wires up #preview-btn / #deploy-btn / #script-modal.
-         Loaded in every page (via the layout) so the buttons work site-wide. -->
-    <script src="~/js/script-runner.js" asp-append-version="true"></script>
+    <!-- site-builder wires up the site dropdown + Preview/Deploy buttons +
+         build modal. Loaded in every page (via the layout) so it works
+         site-wide. -->
+    <script src="~/js/site-builder.js" asp-append-version="true"></script>
 
     @RenderSection("Scripts", required: false)
 </body>

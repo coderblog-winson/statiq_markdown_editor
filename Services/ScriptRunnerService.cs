@@ -1,413 +1,397 @@
+// =====================================================
+//  ScriptRunnerService.cs
+//
+//  Spawns per-site sh scripts (preview.sh / build_deploy.sh /
+//  git_sync.sh) as detached bash processes and tracks their state for
+//  the UI modal. Each script kind gets its own slot so multiple can
+//  run concurrently (e.g. Deploy can start while Preview is still up).
+//
+//  Behaviour:
+//    - Preview  = long-lived bash that builds + starts HTTP server
+//    - Deploy   = one-shot bash that builds + rsyncs + git-syncs
+//    - GitSync  = one-shot bash that commits + pushes
+//
+//  All scripts are launched with `nohup bash <abs_path> <args> > <log>
+//  2>&1 &` so they survive the editor process and write to a known
+//  log file in sites/<name>/scripts/logs/.
+//
+//  Port recovery (preview only): before launching the preview script,
+//  we run the same lsof + kill dance the script itself would do — that
+//  way the UI never sees a "port busy" failure when the previous
+//  preview was orphaned (parent died, port held by python http.server).
+// =====================================================
 using System.Diagnostics;
-using System.Net.Sockets;
 using System.Text;
+using SME.Statiq;
 
 namespace StatiqMarkdownEditor.Services;
 
-/// <summary>
-/// Manages the lifecycle of the two external scripts the editor can launch
-/// against a Statiq project:
-///
-///   * <c>PreviewScriptPath</c> — a long-lived script that builds the
-///     site to <c>output/</c> then starts a local HTTP server. We
-///     launch it <i>detached</i> (nohup + disown) so the Python server
-///     survives even if the .NET editor app restarts. The script
-///     writes its own log; we record status separately so the UI can
-///     poll "is the server ready?" by TCP-probing the port.
-///
-///   * <c>DeployScriptPath</c> — a one-shot build + rsync. We
-///     <i>track</i> this process so the UI can show running/done and
-///     the final exit code. stdout/stderr are appended to a log file
-///     as the process runs so the editor can stream it without
-///     holding the pipes open.
-///
-/// Both actions are mutually exclusive per kind: starting a second
-/// preview while one is already running returns a 409-equivalent error
-/// rather than spawning a duplicate. The deploy script never blocks
-/// the editor — calls return as soon as the child process is started.
-/// </summary>
+public enum ScriptKind
+{
+    Preview,
+    Deploy,
+    GitSync,
+}
+
 public class ScriptRunnerService
 {
+    private readonly string _editorRoot;
     private readonly ILogger<ScriptRunnerService> _log;
 
-    // Deploy is tracked via Process (so we know HasExited + exit code).
-    private Process? _deployProcess;
-    private readonly object _deployLock = new();
+    // Per-kind state — only one running process per kind at a time.
+    // Multiple kinds can run concurrently (preview + deploy).
+    private readonly Dictionary<ScriptKind, RunningScript> _running = new();
 
-    // Preview is detached — the .NET process is NOT the parent of the
-    // long-running script. We track "have we ever started one?" and
-    // "is the port responding?" instead. _previewLogFile is also the
-    // handle the editor reads from to stream output.
-    private string? _previewLogFile;
-    private int _previewPort;
-    private DateTime? _previewStartedAt;
-    private readonly object _previewLock = new();
-
-    public ScriptRunnerService(ILogger<ScriptRunnerService> log) => _log = log;
-
-    public string? PreviewLogFile => _previewLogFile;
-    public string? DeployLogFile => _deployLogFile;
-
-    private string? _deployLogFile;
-
-    // ----------------------------------------------------------------
-    //  Preview
-    // ----------------------------------------------------------------
-
-    /// <summary>
-    /// Launch the preview script detached. Returns immediately. The
-    /// script is expected to: build the site, then start a long-lived
-    /// HTTP server (which is the thing we want to survive across
-    /// editor restarts).
-    /// </summary>
-    public (bool ok, string? error) StartPreview(string scriptPath, int port)
+    private sealed class RunningScript
     {
-        lock (_previewLock)
-        {
-            if (string.IsNullOrEmpty(scriptPath)) return (false, "Preview script path is not configured. Set it in Settings.");
-            if (!File.Exists(scriptPath)) return (false, $"Script not found: {scriptPath}");
+        public required ScriptKind Kind { get; init; }
+        public required string SiteName { get; init; }
+        public required string ScriptPath { get; init; }
+        public required Process Process { get; init; }
+        public required string LogFile { get; init; }
+        public required DateTime StartedAt { get; init; }
+    }
 
-            // Try to free the port BEFORE bailing out on "already in
-            // use". The previous behaviour was to refuse the call when
-            // the port was occupied — which meant a stale preview
-            // server (from a previous editor run, or a leftover python
-            // http.server after a crash) blocked the user forever even
-            // though preview.sh itself has the same recovery logic.
-            // Mirror what preview.sh does: lsof the port, SIGTERM the
-            // occupants, then SIGKILL the survivors, then re-check.
-            var (freed, killed, freeErr) = FreePort(port);
-            if (!string.IsNullOrEmpty(freeErr))
-            {
-                _log.LogWarning("FreePort({Port}) errored: {Err} — will check IsPortOpen anyway", port, freeErr);
-            }
-            if (killed > 0)
-            {
-                _log.LogInformation("FreePort({Port}) killed {Killed} stale process(es)", port, killed);
-            }
-
-            if (IsPortOpen("127.0.0.1", port))
-            {
-                return (false, $"Port {port} is still in use after killing {killed} stale process(es) — probably a system process or permission issue. Change the port in Settings or run `lsof -i tcp:{port}` to see who has it.");
-            }
-
-            var scriptDir = Path.GetDirectoryName(scriptPath)!;
-            var logFile = Path.Combine(scriptDir, ".editor_preview.log");
-
-            try
-            {
-                // Truncate the log so each run starts fresh.
-                File.WriteAllText(logFile, $"[{DateTime.Now:HH:mm:ss}] Spawning preview: bash {scriptPath} {port}\n", Encoding.UTF8);
-
-                // Detach with nohup + disown. The wrapper bash process
-                // exits immediately; preview.sh keeps running in the
-                // background and is reparented to init. All output is
-                // appended to the log file via the wrapper.
-                var psi = new ProcessStartInfo
-                {
-                    FileName = "/bin/bash",
-                    Arguments = $"-c \"nohup bash '{scriptPath}' {port} >> '{logFile}' 2>&1 </dev/null & disown\"",
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                };
-                var wrapper = Process.Start(psi);
-                // The wrapper has no useful work to track; it spawns and
-                // exits. Give it a moment to fork the real script.
-                wrapper?.WaitForExit(2000);
-
-                _previewLogFile = logFile;
-                _previewPort = port;
-                _previewStartedAt = DateTime.Now;
-                _log.LogInformation("Preview started: {Script} (port {Port}, log {Log})", scriptPath, port, logFile);
-                return (true, null);
-            }
-            catch (Exception ex)
-            {
-                _log.LogError(ex, "Failed to start preview: {Script}", scriptPath);
-                return (false, ex.Message);
-            }
-        }
+    public ScriptRunnerService(IWebHostEnvironment env, ILogger<ScriptRunnerService> log)
+    {
+        _editorRoot = env.ContentRootPath;
+        _log = log;
     }
 
     /// <summary>
-    /// Free <paramref name="port"/> by killing any process listening on
-    /// it. Mirrors the recovery logic in preview.sh so the editor side
-    /// can recover from a stale preview server without bouncing the
-    /// user with "port already in use". Returns the number of PIDs
-    /// killed (may be 0 if the port was already free).
+    /// Launch a script for a site. For Preview kind, also pre-emptively
+    /// frees the configured port (lsof + SIGTERM + SIGKILL) so the
+    /// user's preview.sh doesn't have to deal with "address already in use".
     /// </summary>
-    public (bool ok, int killed, string? error) FreePort(int port)
+    public (bool ok, string? error, ScriptRunResult? result) Start(
+        string siteName, ScriptKind kind, SiteConfig cfg)
     {
-        if (port <= 0) return (true, 0, null);
-        if (!IsPortOpen("127.0.0.1", port)) return (true, 0, null);
-
-        int killed = 0;
-        try
+        var scriptRel = kind switch
         {
-            // 1. SIGTERM the occupants, give them ~3 s to exit cleanly.
-            var termPsi = new ProcessStartInfo
-            {
-                FileName = "/bin/bash",
-                Arguments = $"-c \"pids=$(lsof -ti tcp:{port} 2>/dev/null); if [ -n \\\"$pids\\\" ]; then kill $pids 2>/dev/null; for _ in 1 2 3 4 5 6; do if ! lsof -ti tcp:{port} >/dev/null 2>&1; then break; fi; sleep 0.5; done; echo $pids; fi\"",
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-            };
-            using (var p = Process.Start(termPsi))
-            {
-                if (p != null)
-                {
-                    var output = p.StandardOutput.ReadToEnd();
-                    p.WaitForExit(5000);
-                    foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-                    {
-                        if (int.TryParse(line.Trim(), out _)) killed++;
-                    }
-                }
-            }
-
-            // 2. If still listening, SIGKILL the survivors.
-            if (IsPortOpen("127.0.0.1", port))
-            {
-                var killPsi = new ProcessStartInfo
-                {
-                    FileName = "/bin/bash",
-                    Arguments = $"-c \"pids=$(lsof -ti tcp:{port} 2>/dev/null); if [ -n \\\"$pids\\\" ]; then kill -9 $pids 2>/dev/null; sleep 0.5; echo $pids; fi\"",
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                    RedirectStandardOutput = true,
-                };
-                using var p2 = Process.Start(killPsi);
-                if (p2 != null)
-                {
-                    var output = p2.StandardOutput.ReadToEnd();
-                    p2.WaitForExit(3000);
-                    foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-                    {
-                        if (int.TryParse(line.Trim(), out _)) killed++;
-                    }
-                }
-            }
-
-            return (true, killed, null);
-        }
-        catch (Exception ex)
-        {
-            _log.LogWarning(ex, "FreePort({Port}) failed", port);
-            return (false, killed, ex.Message);
-        }
-    }
-
-    /// <summary>
-    /// Stop the preview by killing the process listening on the
-    /// configured port. Also tries to remove the PID file the script
-    /// leaves behind, so the next run doesn't see "stale PID".
-    /// </summary>
-    public (bool ok, string? error, int killed) StopPreview()
-    {
-        lock (_previewLock)
-        {
-            if (_previewPort == 0) return (false, "No preview has been started from the editor yet.", 0);
-
-            int killed = 0;
-            try
-            {
-                // Find PIDs listening on the port and SIGKILL them.
-                var psi = new ProcessStartInfo
-                {
-                    FileName = "/bin/bash",
-                    Arguments = $"-c \"pids=$(lsof -ti tcp:{_previewPort}); if [ -n \\\"$pids\\\" ]; then kill -9 $pids 2>/dev/null; echo $pids; fi\"",
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                    RedirectStandardOutput = true,
-                };
-                using var p = Process.Start(psi);
-                if (p != null)
-                {
-                    var output = p.StandardOutput.ReadToEnd();
-                    p.WaitForExit(3000);
-                    foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-                    {
-                        if (int.TryParse(line.Trim(), out _)) killed++;
-                    }
-                }
-
-                // Also nuke the script's PID file in case the port
-                // happens to be free but the script wrote a stale PID.
-                var scriptDir = Path.GetDirectoryName(_previewLogFile ?? string.Empty);
-                if (!string.IsNullOrEmpty(scriptDir))
-                {
-                    var pidFile = Path.Combine(scriptDir, ".preview_server.pid");
-                    if (File.Exists(pidFile))
-                    {
-                        try
-                        {
-                            var pidStr = (File.ReadAllText(pidFile) ?? "").Trim();
-                            if (int.TryParse(pidStr, out var pid))
-                            {
-                                try { Process.GetProcessById(pid).Kill(entireProcessTree: true); killed++; }
-                                catch { /* already gone */ }
-                            }
-                        }
-                        catch { /* best effort */ }
-                        try { File.Delete(pidFile); } catch { /* best effort */ }
-                    }
-                }
-
-                if (_previewLogFile != null)
-                {
-                    try { File.AppendAllText(_previewLogFile, $"[{DateTime.Now:HH:mm:ss}] Stopped by editor (killed {killed} pid(s))\n", Encoding.UTF8); } catch { }
-                }
-
-                _previewLogFile = null;
-                _previewPort = 0;
-                _previewStartedAt = null;
-                _log.LogInformation("Preview stopped ({Killed} pid(s))", killed);
-                return (true, null, killed);
-            }
-            catch (Exception ex)
-            {
-                _log.LogError(ex, "Failed to stop preview");
-                return (false, ex.Message, killed);
-            }
-        }
-    }
-
-    public (bool running, bool serverReady, int port, string? logFile, DateTime? startedAt) PreviewStatus()
-    {
-        lock (_previewLock)
-        {
-            var ready = _previewPort > 0 && IsPortOpen("127.0.0.1", _previewPort);
-            return (running: _previewLogFile != null, serverReady: ready, port: _previewPort, logFile: _previewLogFile, startedAt: _previewStartedAt);
-        }
-    }
-
-    // ----------------------------------------------------------------
-    //  Deploy
-    // ----------------------------------------------------------------
-
-    public (bool ok, string? error) StartDeploy(string scriptPath)
-    {
-        lock (_deployLock)
-        {
-            if (_deployProcess is { HasExited: false })
-            {
-                return (false, "Deploy is already running. Wait for it to finish.");
-            }
-            if (string.IsNullOrEmpty(scriptPath)) return (false, "Deploy script path is not configured. Set it in Settings.");
-            if (!File.Exists(scriptPath)) return (false, $"Script not found: {scriptPath}");
-
-            var scriptDir = Path.GetDirectoryName(scriptPath)!;
-            var logFile = Path.Combine(scriptDir, ".editor_deploy.log");
-            // Truncate previous run's log
-            File.WriteAllText(logFile, $"[{DateTime.Now:HH:mm:ss}] Spawning deploy: bash {scriptPath}\n", Encoding.UTF8);
-
-            var psi = new ProcessStartInfo
-            {
-                FileName = "/bin/bash",
-                Arguments = $"-c \"bash '{scriptPath}' >> '{logFile}' 2>&1; echo $? > '{logFile}.exit'\"",
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                WorkingDirectory = scriptDir,
-            };
-
-            try
-            {
-                // For deploy we let bash handle the redirect so the
-                // child inherits a clean stdout/stderr (the wrapper
-                // is what writes the log). The wrapper exits as soon
-                // as the child finishes; we poll the .exit file for
-                // the exit code.
-                var wrapper = Process.Start(psi);
-                if (wrapper == null) return (false, "Failed to start deploy process.");
-                _deployProcess = wrapper;
-                _deployLogFile = logFile;
-                _log.LogInformation("Deploy started: {Script} (wrapper pid {Pid}, log {Log})", scriptPath, wrapper.Id, logFile);
-                return (true, null);
-            }
-            catch (Exception ex)
-            {
-                _log.LogError(ex, "Failed to start deploy: {Script}", scriptPath);
-                return (false, ex.Message);
-            }
-        }
-    }
-
-    public (bool running, int? exitCode, string? logFile) DeployStatus()
-    {
-        lock (_deployLock)
-        {
-            int? code = null;
-            var p = _deployProcess;
-            if (p != null)
-            {
-                try
-                {
-                    if (p.HasExited) code = p.ExitCode;
-                }
-                catch { /* process object disposed */ }
-            }
-            // Also read the wrapper's `.exit` sidecar file — it has
-            // the child's exit code even before the .NET Process
-            // object notices the wrapper has exited.
-            if (code == null && _deployLogFile != null)
-            {
-                var sidecar = _deployLogFile + ".exit";
-                if (File.Exists(sidecar))
-                {
-                    var t = (File.ReadAllText(sidecar) ?? "").Trim();
-                    if (int.TryParse(t, out var c)) code = c;
-                }
-            }
-            return (running: p is { HasExited: false }, exitCode: code, logFile: _deployLogFile);
-        }
-    }
-
-    // ----------------------------------------------------------------
-    //  Log helpers
-    // ----------------------------------------------------------------
-
-    /// <summary>
-    /// Read the last <paramref name="tailLines"/> lines from the log
-    /// file. We use a simple "skip N-1 newlines" trick so we don't
-    /// have to load the whole file on every poll.
-    /// </summary>
-    public string ReadLog(string action, int tailLines = 200)
-    {
-        string? logFile = action switch
-        {
-            "preview" => _previewLogFile,
-            "deploy" => _deployLogFile,
+            ScriptKind.Preview => cfg.PreviewScript,
+            ScriptKind.Deploy  => cfg.DeployScript,
+            ScriptKind.GitSync => cfg.GitSyncScript,
             _ => null,
         };
-        if (string.IsNullOrEmpty(logFile) || !File.Exists(logFile)) return "";
+        if (string.IsNullOrWhiteSpace(scriptRel))
+            return (false, $"{kind} script not configured for site '{siteName}'", null);
+
+        var siteDir = Path.Combine(_editorRoot, "sites", siteName);
+        var scriptPath = Path.IsPathRooted(scriptRel)
+            ? scriptRel
+            : Path.Combine(siteDir, scriptRel);
+
+        if (!File.Exists(scriptPath))
+            return (false, $"script not found on disk: {scriptPath}", null);
+
+        // For preview only: ALWAYS free the port before launching. The
+        // user wants "click Preview → server up" even if a previous
+        // preview server is still alive (e.g. orphaned after editor
+        // restart, or user double-clicked). Kill + restart every time.
+        if (kind == ScriptKind.Preview)
+        {
+            // If WE have a recorded running process for this kind, kill
+            // it first so we don't have two PIDs racing for the port.
+            if (_running.TryGetValue(kind, out var prev) && !HasExited(prev.Process))
+            {
+                try { prev.Process.Kill(entireProcessTree: true); } catch { /* ignore */ }
+                _running.Remove(kind);
+            }
+            // Then make sure the port is free (kills anything left over
+            // from a previous orphaned preview).
+            var (portOk, _, killed) = FreePort(cfg.PreviewPort);
+            if (killed > 0)
+                _log.LogInformation("[preview] pre-emptively freed port {Port} (killed {Killed})",
+                    cfg.PreviewPort, killed);
+        }
+        else
+        {
+            // For one-shot scripts (deploy, git-sync), reject if a previous
+            // run of the SAME kind is still active.
+            if (_running.TryGetValue(kind, out var active) && !HasExited(active.Process))
+            {
+                return (false,
+                    $"{kind} already running for site '{active.SiteName}' (PID {active.Process.Id})",
+                    null);
+            }
+        }
+
+        // Per-script logs in sites/<name>/scripts/logs/ — they survive
+        // across runs so the user can dig back into yesterday's deploy
+        // even after the modal closes.
+        var logsDir = Path.Combine(siteDir, "scripts", "logs");
+        Directory.CreateDirectory(logsDir);
+        var ts = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+        var logFile = Path.Combine(logsDir, $"{kind.ToString().ToLowerInvariant()}-{ts}.log");
+
+        // Args: preview takes the port as $1. Deploy/git-sync take no args.
+        var args = kind switch
+        {
+            ScriptKind.Preview => $"\"{scriptPath}\" {cfg.PreviewPort}",
+            _ => $"\"{scriptPath}\"",
+        };
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = "/bin/bash",
+            Arguments = $"-c \"{args}\"",
+            WorkingDirectory = siteDir,
+            RedirectStandardOutput = false, // shell writes directly to log file
+            RedirectStandardError = false,
+            UseShellExecute = false,
+            CreateNoWindow = false,
+            Environment =
+            {
+                // dotnet only available via /usr/local/share/dotnet in user shell
+                ["PATH"] = "/usr/local/share/dotnet:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
+            },
+        };
+
+        // Append `> "$logFile" 2>&1` to the shell -c command so the user
+        // can `tail -f` the log file directly. Build it carefully to
+        // handle paths with spaces.
+        var quotedLog = "\"" + logFile + "\"";
+        psi.Arguments = $"-c \"{args} > {quotedLog} 2>&1\"";
+
+        Process? proc;
         try
         {
-            // Read all lines; for typical log sizes (< 1 MB) this is
-            // fine. If a run is producing huge logs, switch to a
-            // ring-buffer or seek from the end.
-            var all = File.ReadAllLines(logFile, Encoding.UTF8);
-            if (all.Length <= tailLines) return string.Join("\n", all);
-            return string.Join("\n", all, all.Length - tailLines, tailLines);
+            proc = Process.Start(psi);
         }
         catch (Exception ex)
         {
-            _log.LogWarning(ex, "Failed to read log file: {Log}", logFile);
-            return $"<error reading log: {ex.Message}>";
+            _log.LogError(ex, "Failed to start {Kind} for {Site}", kind, siteName);
+            return (false, $"spawn failed: {ex.Message}", null);
+        }
+        if (proc == null)
+            return (false, "Process.Start returned null", null);
+
+        _running[kind] = new RunningScript
+        {
+            Kind = kind,
+            SiteName = siteName,
+            ScriptPath = scriptPath,
+            Process = proc,
+            LogFile = logFile,
+            StartedAt = DateTime.UtcNow,
+        };
+
+        _log.LogInformation("Started {Kind} for {Site}: PID={Pid} script={Script} log={Log}",
+            kind, siteName, proc.Id, scriptPath, logFile);
+
+        return (true, null, new ScriptRunResult
+        {
+            Kind = kind,
+            SiteName = siteName,
+            Pid = proc.Id,
+            LogFile = logFile,
+            StartedAt = _running[kind].StartedAt,
+        });
+    }
+
+    /// <summary>
+    /// Stop a running script by kind. For Preview: also kill anything
+    /// bound to the configured port (since the python http.server inside
+    /// the script holds it). For Deploy/GitSync: process only.
+    /// </summary>
+    public (bool ok, string? error, int killed) Stop(ScriptKind kind, SiteConfig? cfg = null)
+    {
+        if (!_running.TryGetValue(kind, out var r))
+            return (true, null, 0);
+
+        var killed = 0;
+        try
+        {
+            if (!r.Process.HasExited)
+            {
+                r.Process.Kill(entireProcessTree: true);
+                killed++;
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Error killing {Kind} PID {Pid}", kind, r.Process.Id);
+        }
+
+        // Preview's child python http.server might outlive the script's
+        // process group if detached via nohup — kill anything on the port.
+        if (kind == ScriptKind.Preview && cfg != null)
+        {
+            var (_, _, portKilled) = FreePort(cfg.PreviewPort);
+            killed += portKilled;
+        }
+
+        _running.Remove(kind);
+        return (true, null, killed);
+    }
+
+    /// <summary>
+    /// Lightweight status snapshot for the UI modal.
+    /// </summary>
+    public ScriptStatusResult Status(ScriptKind kind)
+    {
+        if (!_running.TryGetValue(kind, out var r))
+            return new ScriptStatusResult { Kind = kind, Running = false };
+
+        var exited = HasExited(r.Process);
+        return new ScriptStatusResult
+        {
+            Kind = kind,
+            Running = !exited,
+            ExitCode = exited ? r.Process.ExitCode : (int?)null,
+            Pid = r.Process.Id,
+            SiteName = r.SiteName,
+            LogFile = r.LogFile,
+            StartedAt = r.StartedAt,
+        };
+    }
+
+    public string ReadLog(ScriptKind kind, int tail = 500)
+    {
+        if (!_running.TryGetValue(kind, out var r) || !File.Exists(r.LogFile))
+            return "";
+
+        // Read last N lines cheaply — open with FileShare.ReadWrite so we
+        // don't lock the script's appending writes.
+        try
+        {
+            using var fs = new FileStream(r.LogFile, FileMode.Open,
+                FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var sr = new StreamReader(fs);
+            var all = sr.ReadToEnd();
+            var lines = all.Split('\n');
+            if (lines.Length <= tail) return all;
+            return string.Join('\n', lines[^tail..]);
+        }
+        catch
+        {
+            return "";
         }
     }
 
-    private static bool IsPortOpen(string host, int port)
+    // ----------------------------------------------------------------
+    //  Helpers
+    // ----------------------------------------------------------------
+
+    private static bool HasExited(Process p)
     {
-        if (port <= 0) return false;
+        try { return p.HasExited; } catch { return true; }
+    }
+
+    /// <summary>
+    /// Kill anything bound to <paramref name="port"/> (preview only).
+    /// Returns (ok, error, killed). Strategy: lsof + SIGTERM → wait 3s →
+    /// SIGKILL. Mirrors what preview.sh itself does, so the wrapper
+    /// never sees a "port busy" error from the script.
+    /// </summary>
+    public static (bool ok, string? error, int killed) FreePort(int port)
+    {
         try
         {
-            using var client = new TcpClient();
-            var task = client.ConnectAsync(host, port);
-            return task.Wait(500) && client.Connected;
+            // lsof returns empty on success (port free), or PIDs on the port.
+            var psi = new ProcessStartInfo
+            {
+                FileName = "/usr/sbin/lsof",
+                Arguments = $"-ti tcp:{port}",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            };
+            using var lsof = Process.Start(psi)!;
+            var pidText = lsof.StandardOutput.ReadToEnd().Trim();
+            lsof.WaitForExit(2000);
+
+            if (string.IsNullOrEmpty(pidText))
+                return (true, null, 0);
+
+            var pids = pidText.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .Select(s => int.TryParse(s.Trim(), out var p) ? p : 0)
+                .Where(p => p > 0)
+                .ToArray();
+            int killed = 0;
+            foreach (var pid in pids)
+            {
+                try { Process.Start(new ProcessStartInfo
+                    {
+                        FileName = "/bin/kill",
+                        Arguments = pid.ToString(),
+                        UseShellExecute = false,
+                    })!.WaitForExit(2000); killed++; }
+                catch { /* ignore */ }
+            }
+
+            // Wait up to 3s for graceful exit.
+            for (int i = 0; i < 6; i++)
+            {
+                if (!IsPortBusy(port)) break;
+                Thread.Sleep(500);
+            }
+            if (IsPortBusy(port))
+            {
+                // Upgrade to SIGKILL.
+                foreach (var pid in pids)
+                {
+                    try { Process.Start(new ProcessStartInfo
+                    {
+                        FileName = "/bin/kill",
+                        Arguments = $"-9 {pid}",
+                        UseShellExecute = false,
+                    })!.WaitForExit(2000); }
+                    catch { /* ignore */ }
+                }
+                Thread.Sleep(500);
+            }
+
+            if (IsPortBusy(port))
+                return (false, "port still busy after SIGKILL", killed);
+            return (true, null, killed);
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message, 0);
+        }
+    }
+
+    private static bool IsPortBusy(int port)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = "/usr/sbin/lsof",
+                Arguments = $"-ti tcp:{port}",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            };
+            using var p = Process.Start(psi)!;
+            var txt = p.StandardOutput.ReadToEnd().Trim();
+            p.WaitForExit(1500);
+            return !string.IsNullOrEmpty(txt);
         }
         catch
         {
             return false;
         }
     }
+}
+
+public class ScriptRunResult
+{
+    public ScriptKind Kind { get; set; }
+    public string SiteName { get; set; } = "";
+    public int Pid { get; set; }
+    public string LogFile { get; set; } = "";
+    public DateTime StartedAt { get; set; }
+}
+
+public class ScriptStatusResult
+{
+    public ScriptKind Kind { get; set; }
+    public bool Running { get; set; }
+    public int? ExitCode { get; set; }
+    public int Pid { get; set; }
+    public string SiteName { get; set; } = "";
+    public string LogFile { get; set; } = "";
+    public DateTime StartedAt { get; set; }
 }
