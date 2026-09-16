@@ -80,6 +80,16 @@ public class SiteConfig
     /// <summary>
     /// Compute the absolute paths under the editor root. Called by StatiqRunner
     /// before passing the config to Bootstrapper.
+    ///
+    /// Theme resolution (Sep-2026):
+    ///   If <see cref="Theme"/> is absolute, use it verbatim (escape hatch
+    ///   for shared themes outside the editor tree).
+    ///   Otherwise, treat the value as RELATIVE TO THE SITE ROOT
+    ///   (<c>sites/&lt;name&gt;/</c>). The post-refactor convention is
+    ///   to keep each site's theme inside its own folder:
+    ///       sites/<name>/themes/_Layout.cshtml
+    ///       sites/<name>/themes/input/_Layout.cshtml
+    ///   so <c>config.json</c> typically just sets <c>"Theme": "themes"</c>.
     /// </summary>
     public SitePaths ResolvePaths(string editorRoot)
     {
@@ -92,7 +102,7 @@ public class SiteConfig
             CacheDir = Path.Combine(editorRoot, "sites", Name, "cache"),
             ThemeDir = Path.IsPathRooted(Theme)
                 ? Theme
-                : Path.Combine(editorRoot, Theme),
+                : Path.Combine(editorRoot, "sites", Name, Theme),
         };
     }
 }

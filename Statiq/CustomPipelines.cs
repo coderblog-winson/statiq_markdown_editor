@@ -71,12 +71,24 @@ public static class CustomPipelines
 
                 // 2. Theme dir is ALSO an input path — themes typically
                 //    carry _Layout.cshtml, _Sidebar.cshtml, partials, etc.
+                //
+                //    Layout in config.json is RELATIVE TO SITE ROOT
+                //    (sites/<name>/themes/ after the Sep-2026 refactor).
+                //    We pass the absolute ThemeDir through unchanged.
                 var themePathNormalized = new NormalizedPath(paths.ThemeDir);
                 var themeInputPath = themePathNormalized.Combine("input");
                 if (fileSystem.GetDirectory(themeInputPath).Exists)
+                {
                     fileSystem.InputPaths.Add(themeInputPath);
+                    System.Console.WriteLine($"[themes] using {themeInputPath}");
+                }
                 else
+                {
                     fileSystem.InputPaths.Add(themePathNormalized);
+                    System.Console.WriteLine($"[themes] using {themePathNormalized} (no input/ subdir)");
+                }
+                foreach (var p in fileSystem.InputPaths)
+                    System.Console.WriteLine($"[themes]   InputPath: {p}");
             })
             .ConfigureEngine(engine =>
             {
