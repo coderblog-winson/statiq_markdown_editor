@@ -1,38 +1,39 @@
-# `Statiq/` — 共享自定义 pipeline 模块
+# `Statiq/` — shared custom pipeline module
 
-3 个 statiq 网站项目共用的 pipeline 模块，从原本各自的 `Program.cs` 里抽出，参数化后放在这里。
+The pipeline module shared by all three statiq sites, extracted from the
+per-site `Program.cs` files and parameterised here.
 
-## 文件清单
+## File inventory
 
-| 文件 | 说明 |
+| File | Purpose |
 |---|---|
-| `SiteConfig.cs` | 单个 site 的配置类（Theme/Host/FigureStyle/StripMonthFromPostUrls 等） |
-| `CustomPipelines.cs` | 进程内 `Bootstrapper` 配置：SetDestination、Tags pipeline、Figure shortcode、RSS/SEO metadata、Draft filter、http→https、Sitemap |
-| `TagAutoLinkModule.cs` | 自动给文章里出现的 tag 名加 `<a>` 链接到 `/tag/<slug>.html` |
-| `ExternalLinkTargetModule.cs` | 站外链接自动加 `target="_blank" rel="noopener noreferrer"` |
+| `SiteConfig.cs` | Per-site config class (`Theme` / `Host` / `FigureStyle` / `StripMonthFromPostUrls` etc.) |
+| `CustomPipelines.cs` | In-process `Bootstrapper` config: `SetDestination`, Tags pipeline, Figure shortcode, RSS / SEO metadata, Draft filter, http → https, Sitemap |
+| `TagAutoLinkModule.cs` | Auto-wrap tag names that appear in posts with `<a>` links to `/tag/<slug>.html` |
+| `ExternalLinkTargetModule.cs` | Auto-add `target="_blank" rel="noopener noreferrer"` to off-site links |
 
-## 接入流程
+## Integration flow
 
-1. `StatiqRunner.BuildAsync(siteName)` 读取 `sites/<name>/config.json` 得到 `SiteConfig`
-2. 用 `cfg.ResolvePaths(editorRoot)` 算出 `SitePaths`（input/output/cache/theme 物理路径）
+1. `StatiqRunner.BuildAsync(siteName)` reads `sites/<name>/config.json` and produces a `SiteConfig`
+2. `cfg.ResolvePaths(editorRoot)` resolves `SitePaths` (input / output / cache / theme physical paths)
 3. `Bootstrapper.Factory.CreateWeb().SetOutputPath(...).SetCachePath(...).ApplyAll(cfg, paths).RunAsync()`
-4. `ApplyAll` 是扩展方法，封装了所有 shared pipeline 注册
+4. `ApplyAll` is an extension method that wraps every shared pipeline registration
 
-## 与现有项目的差异
+## Differences vs the old layout
 
-| 旧（独立项目） | 新（编辑器内置） |
+| Old (standalone projects) | New (editor-integrated) |
 |---|---|
-| `Program.cs` 每个项目一份 | `CustomPipelines.cs` 共用一份 |
-| `appsettings.json` 配置 | `sites/<name>/config.json` |
-| `dotnet run` 跑 statiq | 进程内 `Bootstrapper.RunAsync()` |
-| 模板在项目 `themes/` 下 | 共享 `themes/`（编辑器根） |
-| 每个项目独立 `output/` | `sites/<name>/output/` |
-| Figure shortcode 写死 inline style | `FigureStyle` 字段控制（custom-figure / inline-styled） |
-| TagAutoLinkModule 在项目根 | `Statiq/TagAutoLinkModule.cs` |
+| One `Program.cs` per project | Single shared `CustomPipelines.cs` |
+| `appsettings.json` for config | `sites/<name>/config.json` |
+| `dotnet run` per statiq project | In-process `Bootstrapper.RunAsync()` |
+| Templates under each project's `themes/` | Shared `themes/` at editor root |
+| Each project has its own `output/` | `sites/<name>/output/` |
+| Figure shortcode hardcodes inline style | `FigureStyle` field controls it (`custom-figure` / `inline-styled`) |
+| `TagAutoLinkModule` lived at project root | `Statiq/TagAutoLinkModule.cs` |
 
-## 加新自定义模块的流程
+## Adding a new custom module
 
-例如要加 `CodeHighlightModule`：
+Example — adding a `CodeHighlightModule`:
 
 ```csharp
 // Statiq/CodeHighlightModule.cs
@@ -41,18 +42,18 @@ public class CodeHighlightModule : ParallelModule
     protected override async Task<IEnumerable<IDocument>> ExecuteInputAsync(
         IDocument input, IExecutionContext context)
     {
-        // ... 你的逻辑 ...
+        // ... your logic ...
     }
 }
 ```
 
-然后在 `CustomPipelines.cs` 的 `ApplyAll` 末尾加上：
+Then append to `ApplyAll` in `CustomPipelines.cs`:
 
 ```csharp
 pipeline.ProcessModules.Add(new CodeHighlightModule());
 ```
 
-## 状态
+## Status
 
-- ✅ `SiteConfig` + `CustomPipelines` + 两个 Module 全部抽完
-- ⏳ 现有 3 个网站的 Program.cs 里的 site-specific 行为未做 per-site override（目前是共用一份，如果某个 site 需要不同行为加 cfg 字段即可）
+- ✅ `SiteConfig` + `CustomPipelines` + the two modules all extracted
+- ⏳ Site-specific behaviour from the three sites' old `Program.cs` files is not yet overridden per site — everything is shared for now; add a `cfg` field when a site needs different behaviour
