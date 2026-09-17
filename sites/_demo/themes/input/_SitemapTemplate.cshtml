@@ -1,0 +1,26 @@
+@{
+    Layout = null;
+    ContentType = "application/xml";
+    Response.ContentType = "application/xml; charset=utf-8";
+
+    var siteUrl = (Context.Settings.GetString("SiteUrl") ?? "https://demo.statiq-editor.local").TrimEnd('/');
+}
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+@foreach (var doc in Documents) {
+    var loc = (siteUrl + (doc.GetLink(true) ?? "")).Replace("http://", "https://");
+    if (string.IsNullOrEmpty(loc)) { continue; }
+    string lastmod;
+    if (doc.ContainsKey("Date")) {
+        lastmod = doc.Get<DateTime>("Date").ToString("yyyy-MM-dd");
+    } else if (!doc.Source.IsNull && System.IO.File.Exists(doc.Source.FullPath)) {
+        lastmod = System.IO.File.GetLastWriteTime(doc.Source.FullPath).ToString("yyyy-MM-dd");
+    } else {
+        lastmod = DateTime.UtcNow.ToString("yyyy-MM-dd");
+    }
+    <url>
+        <loc>@loc</loc>
+        <lastmod>@lastmod</lastmod>
+    </url>
+}
+</urlset>

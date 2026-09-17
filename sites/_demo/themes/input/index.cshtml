@@ -1,0 +1,43 @@
+@{
+    Layout = "_Layout.cshtml";
+    // For pages without a frontmatter Title (like index.cshtml), Statiq falls
+    // back to the source filename ("index" → "Input"). Override here so the
+    // <title> renders correctly.
+    var title = "Home";
+    var posts = Document.GetChildren()
+        .Where(c => !c.GetBool("Draft", false))
+        .OrderByDescending(c => c.Get<DateTime>("Date"))
+        .ToList();
+}
+
+<section class="list-page">
+    <header class="list-header">
+        <h1>Recent posts</h1>
+        <p class="muted small">A demo blog powered by Statiq Markdown Editor.</p>
+    </header>
+
+    <ul class="post-list">
+        @foreach (var post in posts) {
+            var postTitle = post.GetString("Title") ?? "Untitled";
+            var postDate = post.ContainsKey("Date") ? post.Get<DateTime>("Date") : DateTime.MinValue;
+            var postExcerpt = post.GetString("Description") ?? "";
+            var postCategory = post.GetString("Category") ?? "";
+            <li class="post-list-item">
+                <article>
+                    <header>
+                        <h2><a href="@(post.GetLink())">@postTitle</a></h2>
+                        <div class="post-meta">
+                            <time datetime="@postDate.ToString("yyyy-MM-dd")">@postDate.ToString("MMM d, yyyy")</time>
+                            @if (!string.IsNullOrEmpty(postCategory)) {
+                                <span class="post-category">@postCategory</span>
+                            }
+                        </div>
+                    </header>
+                    @if (!string.IsNullOrEmpty(postExcerpt)) {
+                        <p>@postExcerpt</p>
+                    }
+                </article>
+            </li>
+        }
+    </ul>
+</section>

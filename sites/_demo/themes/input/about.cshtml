@@ -1,0 +1,58 @@
+@{
+    Layout = "_Layout.cshtml";
+    var title = "About";
+}
+
+<article class="page">
+    <header class="page-header">
+        <h1>About this demo</h1>
+    </header>
+
+    <div class="page-body">
+        <p class="lede">
+            This is a demo site built by <a href="https://github.com/winsonet/statiq_markdown_editor">Statiq Markdown Editor</a>.
+            The editor turns any folder of markdown files into a full Statiq static site — see
+            <a href="https://github.com/winsonet/statiq_markdown_editor">the README</a> for the full guide.
+        </p>
+
+        <h2>What is Statiq?</h2>
+        <p>
+            <a href="https://www.statiq.dev/">Statiq</a> is a .NET static site generator.
+            You write markdown files, drop them in an input folder, and Statiq renders them into HTML
+            using Razor templates. It's the same approach Jekyll / Hugo / 11ty take, just in C#.
+        </p>
+
+        <h2>What does this editor add?</h2>
+        <p>
+            A web UI that wraps Statiq with the tools a writer actually wants:
+        </p>
+        <ul>
+            <li><strong>List view</strong> — every post with category filter and title search.</li>
+            <li><strong>Editor view</strong> — Monaco (the engine behind VS Code) with markdown highlighting, paste-to-markdown, paste-to-image.</li>
+            <li><strong>New post form</strong> — every frontmatter field rendered as a form, with a live YAML preview alongside.</li>
+            <li><strong>Settings</strong> — auto-discovers sites under <code>sites/</code> from each one's <code>config.json</code>.</li>
+            <li><strong>Four toolbar buttons</strong>:
+                <ul>
+                    <li><strong>Build</strong> — runs the in-process Statiq pipeline against the active site (~10 s for a 30-post site).</li>
+                    <li><strong>Preview</strong> — builds then starts a local HTTP server on the site's configured port. Auto-kills any stale process on that port.</li>
+                    <li><strong>Deploy</strong> — runs the site's per-site <code>build_deploy.sh</code>, which usually rsyncs the output to a VPS and commits the source to GitHub.</li>
+                    <li><strong>Git Sync</strong> — runs <code>git_sync.sh</code> standalone, so you can commit &amp; push source-only changes (no rebuild).</li>
+                </ul>
+            </li>
+        </ul>
+
+        <h2>Open the source</h2>
+        <p>
+            The demo posts and theme live under <code>sites/_demo/</code> and <code>themes/_demo/</code>.
+            Clone the repo, <code>dotnet run</code>, click <strong>Build</strong>, then
+            <strong>Preview</strong> — you'll be looking at this same site, served from
+            <code>http://127.0.0.1:5080</code>.
+        </p>
+        <p>
+            Want to add a second site? <code>cp -R sites/_demo sites/blog</code>, edit
+            <code>sites/blog/config.json</code>, change the theme to your own, point
+            <code>Settings → Activate</code> at it, and you're publishing from a fresh site
+            without touching the demo's content.
+        </p>
+    </div>
+</article>

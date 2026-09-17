@@ -1,0 +1,28 @@
+@{
+    Layout = "_Layout.cshtml";
+    var tagName = Document.GetString(Keys.GroupKey) ?? "Tag";
+}
+
+<section class="list-page">
+    <header class="list-header">
+        <h1>Posts tagged <em>"@tagName"</em></h1>
+        <p class="muted small">@Document.GetChildren().Count() post(s).</p>
+    </header>
+
+    <ul class="post-list">
+        @foreach (var post in Document.GetChildren()
+            .Where(c => !c.GetBool("Draft", false))
+            .OrderByDescending(c => c.Get<DateTime>("Date"))) {
+            var postTitle = post.GetString("Title") ?? "Untitled";
+            var postDate = post.ContainsKey("Date") ? post.Get<DateTime>("Date") : DateTime.MinValue;
+            <li class="post-list-item">
+                <article>
+                    <header>
+                        <h2><a href="@(post.GetLink())">@postTitle</a></h2>
+                        <time datetime="@postDate.ToString("yyyy-MM-dd")">@postDate.ToString("MMM d, yyyy")</time>
+                    </header>
+                </article>
+            </li>
+        }
+    </ul>
+</section>

@@ -1,0 +1,40 @@
+@using System.Text
+@using System.Net
+@{
+    Layout = null;
+
+    var posts = Context.Inputs
+        .Where(d => d.ContainsKey("Title") && d.ContainsKey("Date"))
+        .OrderByDescending(d => d.Get<DateTime>("Date"))
+        .Take(20);
+
+    var siteTitle = Context.Settings.GetString("SiteTitle") ?? "Statiq Markdown Editor Demo";
+    var siteDescription = Context.Settings.GetString("SiteDescription")
+        ?? "A web-based editor for Statiq markdown posts.";
+    var siteUrl = (Context.Settings.GetString("SiteUrl") ?? "https://demo.statiq-editor.local").TrimEnd('/');
+
+    var sb = new StringBuilder();
+    sb.Append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
+    sb.Append("<rss version=\"2.0\"><channel>");
+    sb.Append("<title>").Append(WebUtility.HtmlEncode(siteTitle)).Append("</title>");
+    sb.Append("<link>").Append(WebUtility.HtmlEncode(siteUrl)).Append("</link>");
+    sb.Append("<description>").Append(WebUtility.HtmlEncode(siteDescription)).Append("</description>");
+    sb.Append("<language>en-us</language>");
+    sb.Append("<lastBuildDate>").Append(DateTime.UtcNow.ToString("R")).Append("</lastBuildDate>");
+    foreach (var post in posts)
+    {
+        var postTitle = post.GetString("Title") ?? "";
+        var postUrl = (siteUrl + (post.GetLink() ?? "")).Replace("http://", "https://");
+        var postDate = post.Get<DateTime>("Date").ToString("R");
+        var postExcerpt = post.GetString("Description") ?? "";
+        sb.Append("<item>");
+        sb.Append("<title>").Append(WebUtility.HtmlEncode(postTitle)).Append("</title>");
+        sb.Append("<link>").Append(WebUtility.HtmlEncode(postUrl)).Append("</link>");
+        sb.Append("<guid isPermaLink=\"true\">").Append(WebUtility.HtmlEncode(postUrl)).Append("</guid>");
+        sb.Append("<pubDate>").Append(postDate).Append("</pubDate>");
+        sb.Append("<description>").Append(WebUtility.HtmlEncode(postExcerpt)).Append("</description>");
+        sb.Append("</item>");
+    }
+    sb.Append("</channel></rss>");
+}
+@Html.Raw(sb.ToString())

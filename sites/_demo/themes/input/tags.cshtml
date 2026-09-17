@@ -1,0 +1,32 @@
+@{
+    Layout = "_Layout.cshtml";
+    var title = "Tags";
+}
+
+@{
+    // Collect every tag across all posts
+    var allTags = Context.Inputs
+        .Where(d => d.ContainsKey("Tags"))
+        .SelectMany(d => d.GetList<string>("Tags"))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .OrderBy(t => t, StringComparer.OrdinalIgnoreCase);
+}
+
+<article class="page">
+    <header class="page-header">
+        <h1>Tags</h1>
+        <p class="lede">@allTags.Count() tags in total.</p>
+    </header>
+
+    <ul class="tag-cloud">
+        @foreach (var tag in allTags) {
+            var count = Context.Inputs.Count(d => d.ContainsKey("Tags")
+                && d.GetList<string>("Tags").Contains(tag, StringComparer.OrdinalIgnoreCase));
+            <li>
+                <a href="/tag/@(tag.ToLower().Replace(" ", "-")).html" class="tag">
+                    #@tag <span class="tag-count">@count</span>
+                </a>
+            </li>
+        }
+    </ul>
+</article>

@@ -1,7 +1,16 @@
 {
-  "Theme": "themes/_demo",
-  "Host": "demo.local",
+  "Theme": "themes",
+  "Host": "demo.statiq-editor.local",
   "StripMonthFromPostUrls": true,
   "FigureStyle": "custom-figure",
-  "UseHtmlExtensions": true
+  "GoogleAnalyticsId": "",
+  "AdSenseId": "",
+  "UmamiSiteId": "",
+  "UmamiUrl": "",
+  "UseHtmlExtensions": true,
+  "LinkHideExtensions": false,
+  "PreviewScript": "scripts/preview.sh",
+  "DeployScript": "scripts/build_deploy.sh",
+  "GitSyncScript": "scripts/git_sync.sh",
+  "PreviewPort": 5080
 }
