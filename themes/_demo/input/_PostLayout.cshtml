@@ -1,0 +1,42 @@
+@{
+    Layout = "_Layout.cshtml";
+    var title = Document.GetString("Title") ?? "Untitled";
+    var date = Document.ContainsKey("Date") ? Document.Get<DateTime>("Date") : DateTime.MinValue;
+    var category = Document.GetString("Category") ?? "Essay";
+    var description = Document.GetString("Description") ?? "";
+    var tags = Document.ContainsKey("Tags") ? Document.GetList<string>("Tags") : new List<string>();
+    var image = Document.GetString("Image");
+}
+
+<article class="post">
+    <header class="post-header">
+        <div class="post-meta">
+            <time datetime="@date.ToString("yyyy-MM-dd")">@date.ToString("MMMM d, yyyy")</time>
+            <span class="post-category">@category</span>
+        </div>
+        <h1 class="post-title">@title</h1>
+        @if (!string.IsNullOrEmpty(description)) {
+            <p class="post-lede">@description</p>
+        }
+    </header>
+
+    @if (!string.IsNullOrEmpty(image)) {
+        <figure class="post-hero">
+            <img src="@image" alt="@title" />
+        </figure>
+    }
+
+    <div class="post-body">
+        @RenderBody()
+    </div>
+
+    @if (tags.Any()) {
+        <footer class="post-footer">
+            <div class="post-tags">
+                @foreach (var tag in tags) {
+                    <a href="/tag/@(tag.ToLower().Replace(" ", "-")).html" class="tag">#@tag</a>
+                }
+            </div>
+        </footer>
+    }
+</article>

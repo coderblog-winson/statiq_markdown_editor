@@ -3,80 +3,18 @@ using System.Text.Json.Serialization;
 namespace StatiqMarkdownEditor.Models;
 
 /// <summary>
-/// One Statiq project on disk. Multiple of these are listed in
-/// <see cref="StatiqProjectOptions.Projects"/>; the user picks one
-/// to be "active" via the top-nav dropdown. Script paths are stored
-/// RELATIVE to <see cref="Root"/> so a project tree is self-contained
-/// and portable — copy the folder and the config still works.
-/// </summary>
-public class StatiqProjectEntry
-{
-    /// <summary>Display name shown in the project dropdown. e.g. "CoderBlog".</summary>
-    public string Name { get; set; } = string.Empty;
-
-    /// <summary>Absolute path to the project root (folder containing Program.cs).</summary>
-    public string Root { get; set; } = string.Empty;
-
-    /// <summary>Posts subdir, relative to <see cref="Root"/>. Defaults to "input/posts".</summary>
-    public string ContentSubdir { get; set; } = "input/posts";
-
-    /// <summary>Images subdir, relative to <see cref="Root"/>. Defaults to "input/images".</summary>
-    public string ImagesSubdir { get; set; } = "input/images";
-
-    /// <summary>
-    /// Path to the preview shell script, relative to <see cref="Root"/>.
-    /// Leave empty to disable the Preview button for this project.
-    /// </summary>
-    public string PreviewScriptPath { get; set; } = "preview.sh";
-
-    /// <summary>
-    /// Path to the build+deploy shell script, relative to <see cref="Root"/>.
-    /// Leave empty to disable the Deploy button.
-    /// </summary>
-    public string DeployScriptPath { get; set; } = "build_deploy.sh";
-
-    /// <summary>
-    /// Port the preview server listens on. The Preview script is invoked
-    /// with this as its first argument (preview.sh takes the port as <c>$1</c>).
-    /// </summary>
-    public int PreviewPort { get; set; } = 5080;
-
-    /// <summary>
-    /// Text drawn in the bottom-right corner of every image uploaded or
-    /// pasted into this project (e.g. "WinsonInvest.com"). Leave empty
-    /// to skip watermarking. Rendered by <c>ImageService</c> using
-    /// ImageSharp.Drawing.
-    /// </summary>
-    public string Watermark { get; set; } = string.Empty;
-}
-
-/// <summary>
-/// Top-level config. The active project is the one the editor is
-/// currently pointed at — its <c>Root</c> + <c>ContentSubdir</c> drive
-/// every API endpoint, and the top-nav dropdown changes this.
+/// Root config for the editor. After the Sep 2026 refactor this is
+/// just one field: the active site name. The list of available sites
+/// is auto-discovered by <c>StatiqRunner.ListSites()</c> from the
+/// <c>sites/</c> directory; per-site settings (theme, host, paths)
+/// live in <c>sites/&lt;name&gt;/config.json</c>.
 /// </summary>
 public class StatiqProjectOptions
 {
-    /// <summary>All known projects. Empty list is a UI-visible "no project".</summary>
-    public List<StatiqProjectEntry> Projects { get; set; } = new();
-
     /// <summary>
-    /// Name of the project to use for this session. If it doesn't match
-    /// any entry, <see cref="Active"/> falls back to the first project
-    /// in the list (or an empty entry if the list is empty).
+    /// Directory name under <c>sites/</c>. Empty string = no site active.
     /// </summary>
     public string ActiveProjectName { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Resolved "current" project entry. Computed on every access so it
-    /// picks up changes whenever <c>Projects</c> or
-    /// <c>ActiveProjectName</c> is rebound.
-    /// </summary>
-    [JsonIgnore]
-    public StatiqProjectEntry Active =>
-        Projects.FirstOrDefault(p => p.Name == ActiveProjectName)
-        ?? Projects.FirstOrDefault()
-        ?? new StatiqProjectEntry { Name = "(none)" };
 }
 
 public class PostSummary
@@ -143,14 +81,6 @@ public class NewPostRequest
 public class RenameRequest
 {
     public string NewSlug { get; set; } = string.Empty;
-}
-
-public class SettingsUpdateRequest
-{
-    /// <summary>All projects. Sent in full on every save (no merge).</summary>
-    public List<StatiqProjectEntry> Projects { get; set; } = new();
-    /// <summary>Name of the project to use as active. Empty = no change.</summary>
-    public string? ActiveProjectName { get; set; }
 }
 
 /// <summary>Body for <c>POST /api/projects/activate</c>.</summary>

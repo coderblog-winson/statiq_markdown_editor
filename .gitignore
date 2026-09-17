@@ -19,3 +19,21 @@ node_modules/
 dist/
 *.dmg
 
+# Per-site private content — each site lives in its own GitHub repo
+# (winsonet/coderblog.statiq, winsonet/winsoninvest.statiq,
+#  winsonet/tableware.statiq.site). Pushing them into the editor's
+# public repo would leak the markdown + images. The _demo/ site is
+# allowed in — it's the editor's own demo content.
+#
+# Per-site themes (Sep-2026) live UNDER each site at
+# sites/<name>/themes/, so they're caught by sites/* above too.
+# The only thing that stays public in themes/ is _demo.
+sites/*
+!sites/_demo/
+
+themes/_demo/
+
+# Generated artefacts
+cache/
+output/
+

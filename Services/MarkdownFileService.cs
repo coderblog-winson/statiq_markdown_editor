@@ -1,59 +1,74 @@
 using System.Text;
 using System.Text.RegularExpressions;
-using Microsoft.Extensions.Options;
 using StatiqMarkdownEditor.Models;
 
 namespace StatiqMarkdownEditor.Services;
 
 /// <summary>
-/// All file IO for the editor. Scoped to a single Statiq project (path injected via options).
-/// v1: no locking, no concurrent-write protection. Single-user local tool.
+/// All file IO for the editor. Scoped to the currently-active site
+/// resolved via <see cref="StatiqRunner.GetActiveSitePathsSync"/>.
+///
+/// Convention (post Sep-2026 refactor):
+///   posts   live under <c>sites/&lt;name&gt;/input/posts/</c>
+///   images  live under <c>sites/&lt;name&gt;/input/images/</c>
+///
+/// Earlier versions used <c>StatiqProjectOptions.Active.Root</c> +
+/// ContentSubdir / ImagesSubdir / Watermark fields — those moved to
+/// per-site <c>config.json</c>.
 /// </summary>
 public class MarkdownFileService
 {
-    private readonly IOptionsMonitor<StatiqProjectOptions> _opt;
+    private readonly StatiqRunner _runner;
     private readonly FrontmatterService _fm;
     private readonly ILogger<MarkdownFileService> _log;
 
     public MarkdownFileService(
-        IOptionsMonitor<StatiqProjectOptions> opt,
+        StatiqRunner runner,
         FrontmatterService fm,
         ILogger<MarkdownFileService> log)
     {
-        _opt = opt;
+        _runner = runner;
         _fm = fm;
         _log = log;
     }
 
-    private StatiqProjectOptions CurrentOpt => _opt.CurrentValue;
-
+    /// <summary>Absolute path to <c>sites/&lt;active&gt;/input/posts/</c>. Empty if no active site.</summary>
     public string ContentRoot
     {
         get
         {
-            var p = CurrentOpt.Active;
-            return string.IsNullOrEmpty(p.Root) ? string.Empty : Path.Combine(p.Root, p.ContentSubdir);
+            var paths = _runner.GetActiveSitePathsSync();
+            if (paths == null) return string.Empty;
+            return Path.Combine(paths.InputDir, "posts");
         }
     }
 
+    /// <summary>Absolute path to <c>sites/&lt;active&gt;/input/images/</c>. Empty if no active site.</summary>
     public string ImagesRoot
     {
         get
         {
-            var p = CurrentOpt.Active;
-            return string.IsNullOrEmpty(p.Root) ? string.Empty : Path.Combine(p.Root, p.ImagesSubdir);
+            var paths = _runner.GetActiveSitePathsSync();
+            if (paths == null) return string.Empty;
+            return Path.Combine(paths.InputDir, "images");
         }
+    }
+
+    private bool HasActiveSite(out string root)
+    {
+        root = ContentRoot;
+        return !string.IsNullOrEmpty(root) && Directory.Exists(root);
     }
 
     // -------- list --------
 
     public List<PostSummary> ListPosts()
     {
-        if (string.IsNullOrEmpty(CurrentOpt.Active.Root) || !Directory.Exists(ContentRoot))
+        if (!HasActiveSite(out var contentRoot))
             return new List<PostSummary>();
 
         var list = new List<PostSummary>();
-        foreach (var path in Directory.EnumerateFiles(ContentRoot, "*.md", SearchOption.AllDirectories))
+        foreach (var path in Directory.EnumerateFiles(contentRoot, "*.md", SearchOption.AllDirectories))
         {
             try
             {
@@ -169,8 +184,8 @@ public class MarkdownFileService
 
     public (bool ok, string? relativePath, string? error) CreatePost(NewPostRequest req)
     {
-        if (string.IsNullOrEmpty(CurrentOpt.Active.Root) || !Directory.Exists(ContentRoot))
-            return (false, null, $"content root missing: {ContentRoot}");
+        if (!HasActiveSite(out var contentRoot))
+            return (false, null, $"content root missing: {contentRoot}");
 
         var title = (req.Title ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(title))
@@ -195,12 +210,11 @@ public class MarkdownFileService
             return (false, null, "could not derive a slug from title");
 
         // Drop the new file under a {YYYY-MM}/ subdirectory so the posts tree
-        // matches the convention used in the coderblog project (see
-        // input/posts/202609/...). The month is "now" — this is where the post
-        // is *created*, not when it claims to be published. Existing posts
-        // outside a month dir are not touched.
+        // matches the convention used in the editor-managed sites. The month
+        // is "now" — this is where the post is *created*, not when it claims
+        // to be published. Existing posts outside a month dir are not touched.
         var yearMonth = DateTime.Today.ToString("yyyy-MM");
-        var targetDir = Path.Combine(ContentRoot, yearMonth);
+        var targetDir = Path.Combine(contentRoot, yearMonth);
 
         var fileName = $"{slug}.md";
         var full = Path.Combine(targetDir, fileName);
@@ -311,12 +325,12 @@ public class MarkdownFileService
     /// </summary>
     private (bool ok, string full, string? err) ResolveSafePath(string relativePath)
     {
-        if (string.IsNullOrEmpty(CurrentOpt.Active.Root) || !Directory.Exists(ContentRoot))
-            return (false, string.Empty, $"content root missing: {ContentRoot}");
+        if (!HasActiveSite(out var contentRoot))
+            return (false, string.Empty, $"content root missing: {contentRoot}");
 
         var trimmed = relativePath.TrimStart('/');
-        var combined = Path.GetFullPath(Path.Combine(ContentRoot, trimmed.Replace('/', Path.DirectorySeparatorChar)));
-        var rootFull = Path.GetFullPath(ContentRoot);
+        var combined = Path.GetFullPath(Path.Combine(contentRoot, trimmed.Replace('/', Path.DirectorySeparatorChar)));
+        var rootFull = Path.GetFullPath(contentRoot);
         if (!combined.StartsWith(rootFull + Path.DirectorySeparatorChar, StringComparison.Ordinal)
             && !string.Equals(combined, rootFull, StringComparison.Ordinal))
         {
@@ -347,35 +361,34 @@ public class MarkdownFileService
     /// True if the string contains any CJK Unified / Extension A / Compatibility
     /// / Fullwidth character. Same coverage as the client-side check in new.js.
     /// </summary>
-    public static bool ContainsCjk(string s)
+    private static bool ContainsCjk(string s)
     {
-        if (string.IsNullOrEmpty(s)) return false;
         foreach (var ch in s)
         {
-            // CJK Unified Ideographs
-            if (ch >= '\u4E00' && ch <= '\u9FFF') return true;
-            // CJK Extension A
-            if (ch >= '\u3400' && ch <= '\u4DBF') return true;
-            // CJK Compatibility Ideographs
-            if (ch >= '\uF900' && ch <= '\uFAFF') return true;
-            // Fullwidth forms
-            if (ch >= '\uFF00' && ch <= '\uFFEF') return true;
+            int code = ch;
+            if (
+                (0x4E00 <= code && code <= 0x9FFF) ||      // CJK Unified
+                (0x3400 <= code && code <= 0x4DBF) ||      // CJK Extension A
+                (0x20000 <= code && code <= 0x2A6DF) ||    // CJK Extension B
+                (0x3040 <= code && code <= 0x309F) ||      // Hiragana
+                (0x30A0 <= code && code <= 0x30FF) ||      // Katakana
+                (0xAC00 <= code && code <= 0xD7AF) ||      // Hangul
+                (0x3000 <= code && code <= 0x303F) ||      // CJK punctuation
+                (0xFF00 <= code && code <= 0xFFEF))        // Fullwidth ASCII
+            {
+                return true;
+            }
         }
         return false;
     }
 
-    private static int CountWords(string s)
+    private static int CountWords(string body)
     {
-        if (string.IsNullOrWhiteSpace(s)) return 0;
-        int n = 0;
-        bool inWord = false;
-        for (int i = 0; i < s.Length; i++)
-        {
-            var c = s[i];
-            var isWs = char.IsWhiteSpace(c) || c == '\n' || c == '\r' || c == '\t';
-            if (isWs) inWord = false;
-            else if (!inWord) { inWord = true; n++; }
-        }
-        return n;
+        if (string.IsNullOrWhiteSpace(body)) return 0;
+        // Cheap word count: split on whitespace. CJK characters count
+        // individually (each "word" ≈ one character in this approximation).
+        // For posts that are mostly English this is good enough; for CJK-only
+        // posts it over-counts but stays in the same order of magnitude.
+        return body.Split(new[] { ' ', '\t', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries).Length;
     }
 }

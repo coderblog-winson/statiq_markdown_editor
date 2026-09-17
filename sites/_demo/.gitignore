@@ -1,0 +1,6 @@
+output/
+cache/
+.DS_Store
+scripts/logs/
+scripts/.preview_server.pid
+scripts/.preview_server.log

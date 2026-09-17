@@ -1,213 +1,336 @@
 # Statiq Markdown Editor
 
-A web-based editor for [Statiq](https://www.statiq.dev/) markdown posts. Built so
-you can edit your posts in the browser and let [Grammarly](https://www.grammarly.com/)
-check your English while you write.
+A web-based local editor for managing [Statiq](https://www.statiq.dev/) static-site projects. Single-user, no cloud, no telemetry, no account. Just `dotnet run` and edit your posts in the browser.
 
-Single-user local tool — no auth, no cloud, no telemetry. Reads and writes files
-directly from the Statiq project on disk.
+> Edit posts in markdown. Click **Build** to render. Click **Preview** to see the site. Click **Deploy** to push to your VPS. Click **Git Sync** to commit & push.
 
-## Why
+The repo ships with a complete **demo site** (`sites/_demo`) you can build immediately. Add your own sites under `sites/<name>/` and the editor picks them up automatically.
 
-VS Code is great for markdown, but Grammarly lives in the browser. A web editor
-sits in the same place as Grammarly's content script, so suggestions just show up
-next to whatever you type. Monaco editor (the same engine VS Code uses) is
-contenteditable under the hood, which Grammarly already targets.
+---
 
-## What it does
+## Why this exists
 
-- **List view** — every `.md` under the project's `input/posts` (including date
-  subfolders like `input/posts/202609/`), with category filter and search by
-  title or filename.
-- **Edit view** — full Monaco editor with markdown syntax highlighting, line
-  numbers, word wrap at column 100, live word/char/line count.
-- **Paste from the web** — paste any HTML (e.g. a Medium article) and the editor
-  converts it to clean markdown via [Turndown](https://github.com/mixmark-io/turndown).
-  The first line of the URL prefix (e.g. `https://medium.com/...`) is the
-  trigger; tiny snippets still go through as plain text. Headings, lists,
-  fenced code, links, images all converted.
-- **Paste images** — paste an image from the clipboard (screenshot, copied
-  image, etc.) and the editor uploads it to the project, converts to WebP
-  (quality 85, same as the existing og:image convention), saves it under
-  `input/images/{YYYY-MM}/`, and inserts the `![alt](/images/...)` markdown
-  in place. The target month comes from the post's frontmatter `Date` if set,
-  otherwise "now". You can override per-upload.
-- **New post** — full-page form for the 7 frontmatter fields (Title, Slug, Date,
-  Layout, Image, Category, Tags, Description) with a live YAML preview alongside.
-  Creates a clean Statiq-style frontmatter block in the canonical order.
-- **Settings** — point the editor at any Statiq project on disk. Change Root /
-  ContentSubdir / ImagesSubdir through a form; saved to `appsettings.json` and
-  takes effect immediately (no restart needed).
-- **Rename** — change the file slug without touching frontmatter.
-- **Delete** — with confirmation.
-- **Cmd/Ctrl+S** to save; browser warns on close with unsaved changes.
+Statiq posts are flat markdown files. Editing them in a text editor is fine — but you still need a way to:
 
-The frontmatter is preserved byte-for-byte on save. Statiq's
-`<?# Figure ... ?>` shortcodes pass through untouched.
+- Preview what a post looks like *before* deploying
+- Group posts by date / tag without manual SQL
+- Watermark uploaded images consistently
+- Auto-save drafts so a bad keystroke doesn't lose 1,000 words
+- Keep multiple sites under one tool
 
-## Requirements
+This editor is the panel between you and `git`. It is intentionally **not** a CMS: there is no DB, no API, no auth — only your local filesystem.
 
-- macOS / Linux / Windows
-- .NET SDK 9.0 (the project targets `net9.0`; tested on 9.0.200 — same SDK
-  pinned by the Statiq project itself)
+---
 
-Check:
+## 5-minute quickstart
+
 ```bash
-dotnet --list-sdks
-```
-
-## Run
-
-From this directory:
-```bash
+git clone https://github.com/winsonet/statiq_markdown_editor.git
+cd statiq_markdown_editor
 dotnet run
 ```
 
-Then open <http://localhost:5070/>.
+Open <http://127.0.0.1:5070>. The settings page shows the `_demo` site already discovered. Click **Activate**, then click the **Build** button in the top nav. After ~10 seconds `sites/_demo/output/` has 29 rendered HTML files.
 
-The default port is 5070 (see `Properties/launchSettings.json`). The first run
-opens the browser automatically.
+To preview the built site on disk:
 
-## Configure
+```bash
+cd sites/_demo
+python3 -m http.server 5080
+```
 
-Open <http://localhost:5070/Settings> in the browser and edit the form.
-The values are written to `appsettings.json` (preserving the Logging and
-AllowedHosts sections) and the running app reloads them on the next request —
-no restart needed.
+Open <http://127.0.0.1:5080>.
 
-You can also edit `appsettings.json` by hand; the next request picks it up:
+That's it. You have a working build pipeline.
+
+---
+
+## What you get
+
+- **Multi-site dashboard** — each folder under `sites/<name>/` is a site. No config file to edit; the filesystem is the source of truth.
+- **In-browser markdown editor** — split-pane edit/preview, image upload, drag-drop, autosave (1 min default), spell-check, watermark on every image.
+- **Live build log** — click *Build* and watch the Statiq pipeline execute step by step.
+- **Per-site sh scripts** — Preview / Deploy / Git Sync are real bash scripts in `sites/<name>/scripts/`. Edit them, version-control them, share them with your team.
+- **Zero external services** — no API key, no SaaS, no telemetry. Disconnect from the internet and the editor still works.
+
+---
+
+## Architecture
+
+```
+statiq_markdown_editor/                  ← this repo (PUBLIC)
+├── Program.cs / Services/ / Pages/      ← the ASP.NET Core editor process
+├── appsettings.json                     ← just { ActiveProjectName: "_demo" }
+├── Statiq/                              ← shared Statiq.Web bootstrapper
+├── wwwroot/                             ← Razor Pages UI (vanilla JS, no framework)
+├── themes/_demo/                        ← the only PUBLIC theme — for the demo site
+└── sites/
+    ├── _demo/                           ← PUBLIC demo site (5 sample posts)
+    │   ├── config.json
+    │   ├── input/posts/2026-09/*.md
+    │   ├── input/images/2026-09/*.webp
+    │   ├── themes/                      ← self-contained theme for the demo
+    │   └── scripts/                     ← sh scripts (Preview / Git Sync only)
+    └── (your own sites — each is its own GitHub repo)
+```
+
+### What lives where
+
+| Path | Lives in | Why |
+|---|---|---|
+| `Editor.csproj`, `Program.cs`, `Pages/` | this repo | shared editor shell |
+| `themes/_demo/` | this repo | public demo theme |
+| `sites/_demo/` | this repo | public demo content (5 posts + images) |
+| `sites/<your-site>/config.json` | your own GitHub repo | site config |
+| `sites/<your-site>/input/posts/` | your own GitHub repo | your markdown content |
+| `sites/<your-site>/input/images/` | your own GitHub repo | your images |
+| `sites/<your-site>/themes/` | your own GitHub repo | your theme (with the content) |
+| `sites/<your-site>/scripts/` | your own GitHub repo | your preview/deploy/git_sync |
+
+**One editor repo, many site repos.** Sites are independent GitHub repos so access control, secrets, and history don't get tangled.
+
+---
+
+## Adding a new site
+
+1. **Create a folder under `sites/`:**
+
+   ```bash
+   mkdir -p sites/mysite/{input/posts,input/images,themes,scripts}
+   ```
+
+2. **Drop in a `sites/mysite/config.json`:**
+
+   ```json
+   {
+     "Theme": "themes",
+     "Host": "mysite.example.com",
+     "StripMonthFromPostUrls": true,
+     "UseHtmlExtensions": true,
+     "PreviewScript": "scripts/preview.sh",
+     "DeployScript": "scripts/build_deploy.sh",
+     "GitSyncScript": "scripts/git_sync.sh",
+     "PreviewPort": 5083
+   }
+   ```
+
+3. **Copy the demo theme** (`themes/_demo/input/` → `sites/mysite/themes/input/`) as a starting point.
+
+4. **Copy the scripts** (`sites/_demo/scripts/preview.sh` and `git_sync.sh`) — edit `REMOTE_DIR` inside `build_deploy.sh` to point at your VPS path.
+
+5. **Write a post:**
+
+   ```bash
+   cat > sites/mysite/input/posts/2026-09/hello.md <<'EOF'
+   ---
+   Title: Hello world
+   Description: First post on the new site.
+   Date: 2026-09-20
+   Layout: _PostLayout.cshtml
+   Tags: [intro]
+   ---
+
+   # Hello
+
+   This is my first post.
+   EOF
+   ```
+
+6. **Restart `dotnet run`.** The settings page now shows `mysite`. Click *Activate*.
+
+7. Click **Build**. Open `sites/mysite/output/index.html` to see the result.
+
+8. Click **Preview** to spawn a `python3 -m http.server 5083` and view it in the browser.
+
+9. Click **Deploy** to rsync `output/` to your VPS (edit `build_deploy.sh` first).
+
+10. Click **Git Sync** to commit + push.
+
+---
+
+## The four buttons
+
+| Button | What runs | Where the code lives |
+|---|---|---|
+| 🛠 **Build** | In-process `Statiq.Web` pipeline (~10s) | editor's `StatiqRunner.cs` |
+| ▶ **Preview** | `bash sites/<name>/scripts/preview.sh` (python http.server) | per-site sh |
+| ↑ **Deploy** | `bash sites/<name>/scripts/build_deploy.sh` (rsync to VPS) | per-site sh |
+| ⇆ **Git Sync** | `bash sites/<name>/scripts/git_sync.sh` (commit + push) | per-site sh |
+
+**Build** is fast (10–30 s) and runs inside the editor — no bash spawn, no ports. **Preview / Deploy / Git Sync** are slow / side-effecty so they live in plain shell scripts you can read and edit.
+
+### The preview script — start small
+
+```bash
+#!/usr/bin/env bash
+# sites/<name>/scripts/preview.sh <port>
+PORT="${1:-5080}"
+DIR="$(cd "$(dirname "$0")/.." && pwd)/output"
+
+# If port is busy, kill the holder.
+if lsof -ti tcp:"$PORT" >/dev/null 2>&1; then
+  lsof -ti tcp:"$PORT" | xargs kill -9 2>/dev/null
+  sleep 1
+fi
+
+cd "$DIR"
+exec python3 -m http.server "$PORT"
+```
+
+That's all a preview script needs. The editor wraps it: kill any stale server, write a timestamped log to `scripts/logs/`, expose status via `/api/scripts/preview/status` and `/log?tail=500`.
+
+### The build_deploy script — your VPS one-liner
+
+```bash
+#!/usr/bin/env bash
+set -e
+SITE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+REMOTE_DIR="/opt/1panel/www/sites/www.example.com/index/"
+VPS="user@myserver.example.com"
+
+rsync -a --delete "$SITE_DIR/output/" "$VPS:$REMOTE_DIR/"
+bash "$SITE_DIR/scripts/git_sync.sh"
+```
+
+You fill in `REMOTE_DIR` + `VPS`. The script just rsyncs `output/` to wherever Nginx serves from, then runs `git_sync.sh` to commit + push.
+
+---
+
+## Theme development
+
+A theme is just a folder of Razor pages. Drop `_Layout.cshtml`, `_PostLayout.cshtml`, `index.cshtml` and you're rendering.
+
+**Where the theme lives:**
+
+```
+sites/<name>/themes/input/
+├── _ViewImports.cshtml      ← @using Statiq.Common, @inherits StatiqRazorPage<IDocument>
+├── _Layout.cshtml           ← master layout (header / nav / footer)
+├── _PostLayout.cshtml       ← single-post wrapper
+├── index.cshtml             ← home page
+├── about.cshtml             ← /about.html
+├── archives.cshtml          ← /archives.html (groups by year-month)
+├── tags.cshtml              ← /tags.html
+├── feed.cshtml              ← /feed.html (RSS 2.0)
+├── _SitemapTemplate.cshtml  ← custom sitemap.xml
+├── page/2/index.cshtml      ← pagination
+├── robots.txt
+└── assets/
+    ├── css/site.css
+    └── favicon.svg
+```
+
+**Two ways to list documents inside a page:**
+
+```cshtml
+@* In a tag page (children set by GroupDocuments) *@
+@foreach (var post in Document.GetChildren()
+    .Where(c => !c.GetBool("Draft", false))
+    .OrderByDescending(c => c.Get<DateTime>("Date"))) {
+    <li><a href="@(post.GetLink())">@(post.GetString("Title"))</a></li>
+}
+
+@* On a listing page (no children) — pull from pipeline inputs *@
+@foreach (var post in Context.Inputs
+    .Where(d => d.ContainsKey("Title") && d.ContainsKey("Date"))) { ... }
+```
+
+**Don't reference `Documents` directly** — it's not available in layouts (only `Document`, the single page document, is). Use `Document.GetChildren()` for tag pages or `Context.Inputs` for everything else.
+
+---
+
+## Markdown frontmatter
+
+```yaml
+---
+Title: My post title
+Description: One-line summary for SEO and RSS.
+Date: 2026-09-20
+Layout: _PostLayout.cshtml      # which theme layout wraps this post
+Image: /images/2026-09/hero.webp
+Category: tutorials
+Draft: false
+Tags: [statiq, markdown, dotnet]
+---
+```
+
+All eight fields are canonical. The editor writes them in this exact order on save. `Image` URLs in markdown body get rewritten to `/images/...` (the `input/` prefix is stripped).
+
+---
+
+## Configuration reference
+
+### `appsettings.json`
 
 ```json
 {
-  "StatiqProject": {
-    "Root": "/path/to/your.statiq",
-    "ContentSubdir": "input/posts",
-    "ImagesSubdir": "input/images"
-  }
+  "Logging": { "LogLevel": { "Default": "Information", "Microsoft.AspNetCore": "Warning" } },
+  "AllowedHosts": "*",
+  "StatiqProject": { "ActiveProjectName": "_demo" }
 }
 ```
 
-## Grammarly setup
+`ActiveProjectName` decides which site the editor loads on startup. Override locally by editing `appsettings.Development.json` (gitignored).
 
-1. Install the [Grammarly browser extension](https://www.grammarly.com/browser)
-   in Chrome / Edge / Firefox / Arc.
-2. Open the editor at <http://localhost:5070/editor?path=your-post.md>.
-3. Start typing. Grammarly's underlines and suggestions should appear inline.
+### `sites/<name>/config.json`
 
-If Grammarly is blocked on `localhost`, click the extension icon in the toolbar
-and toggle "Check grammar and spelling" on for the current site.
+| Field | Default | Meaning |
+|---|---|---|
+| `Theme` | `themes` | Theme dir, relative to `sites/<name>/` |
+| `Host` | `""` | Public hostname (used for canonical URLs, RSS) |
+| `StripMonthFromPostUrls` | `false` | `/posts/2026-09/foo.html` → `/posts/foo.html` |
+| `UseHtmlExtensions` | `true` | Output `.html` extensions |
+| `FigureStyle` | `default` | `default` / `custom-figure` / `inline-styled` |
+| `GoogleAnalyticsId` | `""` | GA4 measurement ID |
+| `AdSenseId` | `""` | AdSense publisher ID |
+| `PreviewScript` | `scripts/preview.sh` | Bash script for ▶ Preview button |
+| `DeployScript` | `scripts/build_deploy.sh` | Bash script for ↑ Deploy button |
+| `GitSyncScript` | `scripts/git_sync.sh` | Bash script for ⇆ Git Sync button |
+| `PreviewPort` | `5080` | Port for the Preview http.server |
 
-## Project structure
+---
 
-```
-statiq_markdown_editor/
-├── Editor.csproj              # net9.0 web app, depends on YamlDotNet + ImageSharp
-├── Program.cs                 # minimal API + Razor Pages wiring
-├── appsettings.json           # StatiqProject:Root / ContentSubdir / ImagesSubdir
-├── Properties/launchSettings.json
-├── Models/Models.cs           # PostSummary, PostContent, FrontmatterData, NewPostRequest, SettingsUpdateRequest, ImageUploadResponse
-├── Services/
-│   ├── FrontmatterService.cs  # YAML split + re-emit with stable key order
-│   ├── MarkdownFileService.cs # list / read / write / delete / create / rename
-│   ├── ImageService.cs        # paste upload → WebP → input/images/YYYY-MM/
-│   └── SettingsService.cs     # read/write appsettings.json + trigger reload
-├── Pages/
-│   ├── _ViewImports.cshtml
-│   ├── _ViewStart.cshtml
-│   ├── Index.cshtml + .cs     # list page (open / rename / delete)
-│   ├── Editor.cshtml + .cs    # editor page (Monaco + Grammarly + paste)
-│   ├── New.cshtml + .cs       # new post form (7 frontmatter fields)
-│   ├── Settings.cshtml + .cs  # settings form (Statiq project path)
-│   ├── Error.cshtml + .cs
-│   └── Shared/_Layout.cshtml
-└── wwwroot/
-    ├── css/site.css           # base + tokens
-    ├── css/list.css
-    ├── css/editor.css
-    ├── css/new.css            # new post form + YAML preview
-    ├── css/settings.css
-    ├── js/list.js
-    ├── js/editor.js           # Monaco + paste (image → /api/images, HTML → Turndown)
-    ├── js/new.js              # new post form + live preview
-    └── js/settings.js         # settings load + save
-```
+## Programmatic endpoints
 
-## Image upload rules
+The editor exposes a small JSON API if you want to script it:
 
-- **Input formats**: anything ImageSharp can decode (PNG, JPEG, GIF, BMP, WebP,
-  TIFF, TGA, PBM). The decoder is auto-detected from bytes.
-- **Output**: WebP quality 85 (matches the existing `svg2webp.py` convention).
-- **Filename**: `{slug}-{HHmmss}.webp`, with `-2`, `-3` suffixes if the slot is
-  taken. The slug is derived from the original filename when available.
-- **Destination**: `{Root}/{ImagesSubdir}/{YYYY-MM}/`. The YYYY-MM comes from
-  the post's frontmatter `Date` when known, otherwise the upload time. You can
-  override per upload.
-- **URL written to markdown**: `/{ImagesSubdir without "input/"}/{YYYY-MM}/file.webp`
-  — matches the convention used in the coderblog frontmatter `Image:` field.
-- **Max size**: 25 MB per upload (hard cap; the request is rejected before any
-  decode work is done).
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/settings` | List all sites + active project |
+| POST | `/api/projects/activate` | `{ "name": "mysite" }` switch active site |
+| GET | `/api/posts` | List posts in active site |
+| GET | `/api/posts/{slug}` | Read a post |
+| POST | `/api/posts` | Create / update a post |
+| POST | `/api/sites/{name}/build` | Run the in-process build |
+| POST | `/api/sites/{name}/preview` | Spawn the preview script |
+| POST | `/api/sites/{name}/deploy` | Spawn the deploy script |
+| POST | `/api/sites/{name}/git-sync` | Spawn the git_sync script |
+| POST | `/api/scripts/{kind}/stop` | Kill a running preview/deploy/git-sync |
+| GET | `/api/scripts/{kind}/status` | `{ alive: true, exitCode: 0 }` |
+| GET | `/api/scripts/{kind}/log?tail=500` | Tail the log file |
 
-## API
+---
 
-All endpoints under `/api/`:
+## Limitations (by design)
 
-| Method | Path                              | Notes                                |
-| ------ | --------------------------------- | ------------------------------------ |
-| GET    | `/api/posts`                      | `?q=` search, `?category=` filter    |
-| GET    | `/api/posts/{*path}`              | returns frontmatter + body + rawText |
-| PUT    | `/api/posts/{*path}`              | body `{relativePath, rawText}`       |
-| DELETE | `/api/posts/{*path}`              |                                      |
-| POST   | `/api/posts`                      | body `NewPostRequest` (7 fields)     |
-| POST   | `/api/posts/rename?path=…`        | body `{newSlug}`                     |
-| GET    | `/api/categories`                 |                                      |
-| PUT    | `/api/images`                     | multipart: `file`, `postPath?`, `targetDate?` |
-| GET    | `/api/settings`                   | resolved paths + existence flag      |
-| PUT    | `/api/settings`                   | body `SettingsUpdateRequest`         |
+- **No multi-user.** The editor binds to `127.0.0.1`. Don't expose it on a LAN without auth.
+- **No cloud sync.** Files live on your disk. If your laptop dies, so does your content — git push is your backup.
+- **No live preview.** You click **Build** to render; the editor doesn't watch files.
+- **No image optimization pipeline.** `webp` upload is just a re-encode; no responsive sizes, no lazy loading generation.
 
-## Safety
+These are choices, not bugs. Add them yourself if you need them.
 
-- All file paths are validated against the content root — `..` and absolute
-  paths return 404.
-- The save path writes `rawText` verbatim, so the frontmatter you see in the
-  editor is exactly what ends up on disk.
-- The `Create` path uses a stable field order (Title, Description, Date, Layout,
-  Image, Category, Tags) so diffs against older posts stay clean.
+---
 
-## Known limitations (v1)
+## License
 
-- No image browser — you see only images you've pasted; no thumbnails of the
-  existing `input/images/` tree.
-- No live markdown preview pane (Monaco highlights syntax; render in VS Code or
-  run the Statiq preview script when you want a visual check).
-- No concurrent-write protection (single-user local tool).
-- Filename rename only — does not touch the frontmatter `Title` or URL slug.
-- HTML→markdown conversion uses Turndown defaults. Complex Medium-specific
-  embeds (tweets, code blocks with custom containers) may not convert perfectly.
+MIT — see [LICENSE](LICENSE).
 
-## Building a Mac .app (double-click to launch)
+---
 
-```bash
-npm install            # one-time: installs Electron
-npm run build:mac      # produces dist/Statiq Markdown Editor.app
-open "dist/Statiq Markdown Editor.app"
-```
+## Credits
 
-The resulting .app is a self-contained Mac application — no .NET SDK
-or `dotnet run` needed. Double-clicking it spawns the editor UI.
-
-What's inside:
-- `Contents/MacOS/Electron` — the Electron host binary
-- `Contents/Resources/app/` — our main.js + package.json
-- `Contents/Resources/server/` — self-contained .NET 9 runtime
-  + wwwroot + appsettings.json (single `StatiqMarkdownEditor` binary, 106MB)
-
-First launch (unsigned): macOS Gatekeeper will block the unsigned
-.app. Right-click the .app → **Open** → **Open** to bypass.
-
-To install to /Applications:
-```bash
-cp -R "dist/Statiq Markdown Editor.app" /Applications/
-```
-
-For development, prefer `dotnet run` (port 5070) — it's faster to
-iterate than rebuilding the .app.
+- [Statiq](https://www.statiq.dev/) — the static-site generator this editor wraps.
+- ASP.NET Core / Razor Pages — the editor process.
+- [Marked](https://marked.js.org/) — client-side markdown preview.
+- The demo theme is a deliberately small, vanilla-CSS starter. Replace it with whatever you want.

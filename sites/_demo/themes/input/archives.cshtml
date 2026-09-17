@@ -1,0 +1,48 @@
+@{
+    Layout = "_Layout.cshtml";
+    var title = "Archives";
+
+    // Group Context.Inputs by year-month, newest first
+    var byMonth = Context.Inputs
+        .Where(d => d.ContainsKey("Date"))
+        .GroupBy(d => d.Get<DateTime>("Date").ToString("yyyy-MM"))
+        .OrderByDescending(g => g.Key);
+}
+
+<article class="page">
+    <header class="page-header">
+        <h1>Archives</h1>
+        <p class="lede">@Context.Inputs.Count() posts, grouped by month.</p>
+    </header>
+
+    @foreach (var group in byMonth) {
+        var first = group.First();
+        var monthDate = first.Get<DateTime>("Date");
+        var monthLabel = monthDate.ToString("MMMM yyyy");
+        <section class="archive-month">
+            <h2>@monthLabel</h2>
+            <ul class="post-list">
+                @foreach (var post in group.OrderByDescending(d => d.Get<DateTime>("Date"))) {
+                    var postTitle = post.GetString("Title") ?? "Untitled";
+                    var postDate = post.Get<DateTime>("Date");
+                    var postExcerpt = post.GetString("Description") ?? "";
+                    <li class="post-list-item">
+                        <article>
+                            <header>
+                                <h3>
+                                    <a href="@(post.GetLink())">@postTitle</a>
+                                </h3>
+                                <div class="post-meta">
+                                    <time datetime="@postDate.ToString("yyyy-MM-dd")">@postDate.ToString("MMM d")</time>
+                                </div>
+                            </header>
+                            @if (!string.IsNullOrEmpty(postExcerpt)) {
+                                <p>@postExcerpt</p>
+                            }
+                        </article>
+                    </li>
+                }
+            </ul>
+        </section>
+    }
+</article>
