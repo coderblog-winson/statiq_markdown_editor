@@ -39,6 +39,7 @@
     ],
     "mac": {
       "category": "public.app-category.developer-tools",
+      "icon": "scripts/app.icns",
       "target": [
         { "target": "dir", "arch": ["arm64"] }
       ],
