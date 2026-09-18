@@ -429,6 +429,22 @@ to the login form; posting the correct password returns a session cookie
 (`HttpOnly` + `SameSite=Strict` + `Secure` on HTTPS) and redirects to
 where you were heading.
 
+> **Live reload.** `Auth.Enabled` is bound via `IOptionsMonitor` and the
+> default JSON configuration provider has `reloadOnChange: true`, so
+> saving an edit to `appsettings.json` takes effect on the very next HTTP
+> request — no host restart, no rebuild. Allow ~3 seconds for the
+> FileSystemWatcher debounce.
+>
+> **Don't shadow it in `appsettings.Development.json`.** When you run
+> with `ASPNETCORE_ENVIRONMENT=Development` (the `dotnet run` default
+> from `Properties/launchSettings.json`), the dev-specific file overrides
+> the base by env-name. If your dev file contains its own `"Auth"` block
+> — e.g. a stale `Enabled: false` from earlier experimentation — it will
+> silently win over any edit you make to the base. If toggling
+> `Auth.Enabled` doesn't seem to do anything, check that
+> `appsettings.Development.json` either doesn't have an `Auth` block, or
+> mirrors the value you set in the base.
+
 ### Step 3 — bind it wherever (LAN / public Internet)
 
 ```bash
