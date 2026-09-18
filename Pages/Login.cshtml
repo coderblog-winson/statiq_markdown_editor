@@ -1,0 +1,69 @@
+@page
+@using StatiqMarkdownEditor.Auth
+@model StatiqMarkdownEditor.Pages.LoginModel
+@{
+    Layout = "_Layout";
+    ViewData["Title"] = "Sign in";
+}
+
+<link rel="stylesheet" href="~/css/auth.css" asp-append-version="true" />
+
+<div class="auth-card auth-card--login">
+    <div class="auth-icon">🔒</div>
+    <h1 class="auth-title">Statiq Markdown Editor</h1>
+
+    @if (Model.AuthDisabled)
+    {
+        <p class="auth-lede">
+            Authentication is <strong>disabled</strong> on this instance, so a
+            password is not required. If you reached this page because you
+            intended to enable login, set <code>Auth.Enabled=true</code> in
+            <code>appsettings.json</code> and restart.
+        </p>
+        <a href="/" class="auth-btn auth-btn--primary">Continue to editor →</a>
+    }
+    else
+    {
+        <p class="auth-lede">Enter the admin password to continue.</p>
+        <form id="login-form" method="post" action="/api/auth/login" autocomplete="on">
+            <input type="hidden" name="_csrf" value="@Model.CsrfToken" />
+            <input type="hidden" name="returnUrl" value="@Model.ReturnUrl" />
+            <div class="auth-field">
+                <label for="password" class="auth-label">Password</label>
+                <input type="password" id="password" name="password"
+                       class="auth-input" required autofocus autocomplete="current-password" />
+            </div>
+            <div id="login-error" class="auth-error" hidden></div>
+            <button type="submit" class="auth-btn auth-btn--primary">Sign in</button>
+        </form>
+    }
+</div>
+
+<script>
+    (function () {
+        var form = document.getElementById('login-form');
+        if (!form) return;
+        form.addEventListener('submit', function (e) {
+            e.preventDefault();
+            var errEl = document.getElementById('login-error');
+            errEl.hidden = true;
+            errEl.textContent = '';
+            var data = new FormData(form);
+            fetch(form.action, {
+                method: 'POST',
+                body: new URLSearchParams(data),
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            }).then(function (r) {
+                if (r.ok) { window.location.href = data.get('returnUrl') || '/'; return; }
+                return r.json().then(function (j) { throw new Error(j.error || 'Login failed'); });
+            }).catch(function (err) {
+                errEl.textContent = err.message || 'Login failed';
+                errEl.hidden = false;
+                // Refocus the password input so the user can retry quickly.
+                document.getElementById('password').focus();
+                document.getElementById('password').select();
+            });
+        });
+    })();
+</script>

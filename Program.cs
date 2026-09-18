@@ -1,20 +1,39 @@
 using Microsoft.Extensions.Options;
+using StatiqMarkdownEditor.Auth;
 using StatiqMarkdownEditor.Models;
 using StatiqMarkdownEditor.Pages;
 using StatiqMarkdownEditor.Services;
 using SME.Statiq;
+
+// ---------- CLI subcommand: --init-auth ----------
+//
+// Generates Auth/auth.json with a fresh PBKDF2 hash for a password
+// prompted from stdin. Bails out before starting the web host so the
+// auth.json is the only side effect.
+//
+// Usage:
+//   dotnet run -- --init-auth
+//   # then type the password, press Enter, repeat.
+if (args.Contains("--init-auth"))
+{
+    var code = InitAuthCommand.Run(args);
+    Environment.Exit(code);
+}
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddRazorPages();
 builder.Services.Configure<StatiqProjectOptions>(
     builder.Configuration.GetSection("StatiqProject"));
+builder.Services.Configure<AuthOptions>(
+    builder.Configuration.GetSection("Auth"));
 builder.Services.AddSingleton<FrontmatterService>();
 builder.Services.AddSingleton<MarkdownFileService>();
 builder.Services.AddSingleton<ImageService>();
 builder.Services.AddSingleton<SettingsService>();
 builder.Services.AddSingleton<StatiqRunner>();
 builder.Services.AddSingleton<ScriptRunnerService>();
+builder.Services.AddSingleton<AuthService>();
 
 var app = builder.Build();
 
@@ -27,6 +46,12 @@ if (!app.Environment.IsDevelopment())
 app.UseStaticFiles();
 app.UseRouting();
 app.UseStatusCodePages("text/plain", "Status: {0}");
+
+// Auth gate. When Auth.Enabled=true, this rejects every request that
+// doesn't carry a valid session cookie (except the /Login page and the
+// /api/auth/* endpoints). When disabled (the local-tool default), it's
+// a no-op. See Auth/RequireAuthMiddleware.cs.
+app.UseMiddleware<RequireAuthMiddleware>();
 
 // ---------- Minimal API: posts ----------
 //
@@ -368,6 +393,224 @@ app.MapGet("/api/scripts/{kind}/log", (string kind, HttpContext ctx, ScriptRunne
     return Results.Ok(new { text = svc.ReadLog(parsed, tail) });
 });
 
+// ---------- Auth endpoints ----------
+//
+// /api/auth/status — probe: is auth on, and am I signed in? The Login
+//   page uses this to decide whether to show the form.
+// /api/auth/login  — credential check. Accepts form-urlencoded (the
+//   Login page's fetch call) or JSON {password, csrf, returnUrl}. On
+//   success sets the session cookie and returns 200 + returnUrl.
+// /api/auth/logout — clears the session cookie. POST-by-design (state
+//   mutation); CSRF protected via the same _csrf field.
+// /api/auth/change-password — rotate the admin password (triple-gated:
+//   signed-in session cookie + CSRF token + correct current password).
+//   On success the in-memory HMAC key is cleared, invalidating every
+//   existing session — the user is bounced back to /Login.
+app.MapGet("/api/auth/status", (HttpContext ctx, AuthService auth) =>
+{
+    bool authenticated = ctx.Request.Cookies.TryGetValue(AuthService.SessionCookieName, out var token)
+        && auth.TryValidateSessionToken(token, out _);
+    return Results.Ok(new { enabled = auth.IsEnabled, authenticated });
+});
+
+app.MapPost("/api/auth/login", async (HttpContext ctx, AuthService auth) =>
+{
+    if (!auth.IsEnabled)
+        return Results.Ok(new { ok = true, message = "auth disabled — no login required" });
+
+    // Read body once. Accept both form-urlencoded (Login page fetch) and JSON.
+    string? password = null;
+    string? csrf = null;
+    string? returnUrl = null;
+
+    if (ctx.Request.HasFormContentType)
+    {
+        var form = await ctx.Request.ReadFormAsync();
+        password = form["password"].ToString();
+        csrf = form["_csrf"].ToString();
+        returnUrl = form["returnUrl"].ToString();
+    }
+    else
+    {
+        var body = await ctx.Request.ReadFromJsonAsync<LoginRequest>();
+        password = body?.Password;
+        csrf = body?.Csrf;
+        returnUrl = body?.ReturnUrl;
+    }
+
+    if (string.IsNullOrEmpty(password))
+        return Results.BadRequest(new { error = "password required" });
+
+    // CSRF check: form must echo the token issued in the Csrf cookie.
+    if (!ctx.Request.Cookies.TryGetValue(AuthService.CsrfCookieName, out var cookieCsrf)
+        || string.IsNullOrEmpty(csrf)
+        || !auth.CsrfTokensMatch(cookieCsrf, csrf))
+    {
+        // Diagnostic log — helps debug browser caching / cookie-blocking
+        // extension / same-origin policy issues without exposing the
+        // tokens in production logs (only lengths + first/last 4 chars).
+        var logger = ctx.RequestServices.GetRequiredService<ILogger<Program>>();
+        string fingerprint(string? s) => string.IsNullOrEmpty(s)
+            ? "(missing)"
+            : $"{s.Length} chars [{s[..Math.Min(4, s.Length)]}…{s[^Math.Min(4, s.Length)..]}]";
+        logger.LogWarning(
+            "CSRF mismatch: cookie={Cookie} form={Form} password={Pw} ua={UA}",
+            fingerprint(cookieCsrf),
+            fingerprint(csrf),
+            fingerprint(password),
+            ctx.Request.Headers.UserAgent.ToString());
+        return Results.BadRequest(new { error = "csrf token missing or mismatched" });
+    }
+
+    if (!auth.VerifyPassword(password))
+        return Results.Json(new { error = "incorrect password" }, statusCode: 401);
+
+    var token = auth.IssueSessionToken();
+    var cfg = auth.LoadConfig();
+    var lifetime = TimeSpan.FromHours(cfg?.SessionExpiryHours ?? 24);
+    ctx.Response.Cookies.Append(
+        AuthService.SessionCookieName, token, auth.BuildSessionCookieOptions(ctx, lifetime));
+    // Refresh CSRF cookie lifetime so it doesn't expire mid-session.
+    ctx.Response.Cookies.Append(
+        AuthService.CsrfCookieName,
+        auth.GenerateCsrfToken(),
+        auth.BuildCsrfCookieOptions(lifetime));
+
+    return Results.Ok(new { ok = true, returnUrl = string.IsNullOrEmpty(returnUrl) ? "/" : returnUrl });
+});
+
+app.MapPost("/api/auth/logout", (HttpContext ctx) =>
+{
+    ctx.Response.Cookies.Delete(AuthService.SessionCookieName);
+    ctx.Response.Cookies.Delete(AuthService.CsrfCookieName);
+    return Results.Ok(new { ok = true });
+});
+
+app.MapPost("/api/auth/change-password", async (HttpContext ctx, AuthService auth, ILoggerFactory lf) =>
+{
+    if (!auth.IsEnabled) return Results.NotFound();
+
+    // Must be signed in (RequireAuthMiddleware already blocks
+    // unauthenticated /api/*, but be defensive in case the path
+    // becomes allow-listed later).
+    if (!ctx.Request.Cookies.TryGetValue(AuthService.SessionCookieName, out var sessionToken)
+        || !auth.TryValidateSessionToken(sessionToken, out _))
+    {
+        return Results.Json(new { error = "sign in required" }, statusCode: 401);
+    }
+
+    var body = await ctx.Request.ReadFromJsonAsync<ChangePasswordRequest>();
+    if (body is null)
+        return Results.BadRequest(new { error = "invalid request body" });
+
+    // CSRF check
+    if (!ctx.Request.Cookies.TryGetValue(AuthService.CsrfCookieName, out var cookieCsrf)
+        || string.IsNullOrEmpty(body.Csrf)
+        || !auth.CsrfTokensMatch(cookieCsrf, body.Csrf))
+    {
+        return Results.BadRequest(new { error = "csrf token missing or mismatched" });
+    }
+
+    var logger = lf.CreateLogger("change-password");
+    var result = await auth.ChangePasswordAsync(body.CurrentPassword ?? "", body.NewPassword ?? "");
+    return result switch
+    {
+        AuthService.ChangePasswordResult.Ok => Results.Ok(new
+        {
+            ok = true,
+            message = "password changed — please sign in again",
+        }),
+        AuthService.ChangePasswordResult.WrongCurrent => Results.Json(
+            new { error = "current password is incorrect" }, statusCode: 401),
+        AuthService.ChangePasswordResult.WeakNewPassword => Results.BadRequest(
+            new { error = $"new password must be at least {AuthService.MinPasswordLength} characters" }),
+        AuthService.ChangePasswordResult.SameAsCurrent => Results.BadRequest(
+            new { error = "new password must differ from the current one" }),
+        AuthService.ChangePasswordResult.NotReady => Results.Json(
+            new { error = "auth.json is missing or unreadable" }, statusCode: 503),
+        AuthService.ChangePasswordResult.WriteFailed => Results.Json(
+            new { error = "failed to write auth.json" }, statusCode: 500),
+        _ => Results.BadRequest(new { error = "unknown error" }),
+    };
+});
+
 app.MapRazorPages();
+
+// ---------- IP guard ----------
+//
+// Footgun protection: if the operator binds the editor to a non-loopback
+// address (e.g. 0.0.0.0 to expose it to a LAN), authentication MUST be
+// enabled — otherwise anyone who can reach the port can delete posts.
+// The check runs once at startup so misconfigurations fail loudly.
+//
+// We can't trust app.Urls here (it's empty until Kestrel binds, which
+// happens inside app.Run()). Instead, pull the binding hint from the
+// same sources Kestrel consults: --urls CLI flag, ASPNETCORE_URLS env
+// var, and launchSettings.json (dev only).
+{
+    var bindUrls = new List<string>();
+
+    // 1. Command line: --urls <url>
+    for (int i = 0; i < args.Length - 1; i++)
+    {
+        if (args[i] == "--urls") bindUrls.Add(args[i + 1]);
+    }
+
+    // 2. ASPNETCORE_URLS env var (semicolon-separated in ASP.NET Core 6+)
+    var envUrls = Environment.GetEnvironmentVariable("ASPNETCORE_URLS");
+    if (!string.IsNullOrEmpty(envUrls))
+    {
+        bindUrls.AddRange(envUrls.Split(';', StringSplitOptions.RemoveEmptyEntries));
+    }
+
+    // 3. launchSettings.json (dev only — see Properties/launchSettings.json
+    //    applicationUrl). If we find one, use its applicationUrl.
+    var launchProfile = Environment.GetEnvironmentVariable("DOTNET_LAUNCH_PROFILE");
+    if (!string.IsNullOrEmpty(launchProfile))
+    {
+        var launchSettingsPath = Path.Combine(
+            AppContext.BaseDirectory, "..", "..", "..", "Properties", "launchSettings.json");
+        if (File.Exists(launchSettingsPath))
+        {
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(launchSettingsPath));
+                if (doc.RootElement.TryGetProperty("profiles", out var profiles)
+                    && profiles.TryGetProperty(launchProfile, out var profile)
+                    && profile.TryGetProperty("applicationUrl", out var appUrl))
+                {
+                    bindUrls.AddRange(appUrl.GetString()?.Split(';', StringSplitOptions.RemoveEmptyEntries)
+                                       ?? Array.Empty<string>());
+                }
+            }
+            catch { /* ignore — dev-only fallback */ }
+        }
+    }
+
+    bool bindsPublicly = bindUrls.Any(u =>
+    {
+        var uri = u.Replace("http://", "").Replace("https://", "");
+        var host = uri.Split(':')[0];
+        return host != "127.0.0.1" && host != "localhost" && host != "::1";
+    });
+
+    var authOpts = app.Services.GetRequiredService<IOptions<AuthOptions>>().Value;
+    if (bindsPublicly && !authOpts.Enabled)
+    {
+        Console.Error.WriteLine();
+        Console.Error.WriteLine("FATAL: Server is bound to a public address but Auth.Enabled is false.");
+        Console.Error.WriteLine("       Refusing to start without authentication.");
+        Console.Error.WriteLine();
+        Console.Error.WriteLine("  Detected binding:");
+        foreach (var u in bindUrls) Console.Error.WriteLine($"    {u}");
+        Console.Error.WriteLine();
+        Console.Error.WriteLine("  Fix one of:");
+        Console.Error.WriteLine("    - Set --urls to 127.0.0.1:5070 (local-only), OR");
+        Console.Error.WriteLine("    - Set Auth.Enabled=true in appsettings.json AND create Auth/auth.json");
+        Console.Error.WriteLine("      via `dotnet run --init-auth`.");
+        Console.Error.WriteLine();
+        return;
+    }
+}
 
 app.Run();

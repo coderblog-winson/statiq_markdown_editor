@@ -392,9 +392,123 @@ The default config has `identity: null` / `hardenedRuntime: false` — the `.app
 
 ---
 
+## Authentication (optional)
+
+The editor ships as a **local tool** — by default it binds to `127.0.0.1`
+only and skips login entirely. If you want to expose it on a LAN or the
+public Internet (so you can edit from your phone, share with a collaborator,
+etc.), enable the built-in password gate.
+
+### Step 1 — create the password file
+
+```bash
+dotnet run -- --init-auth
+# → "New password:" → type a password → "Confirm password:" → type it again
+# → wrote Auth/auth.json (mode 600)
+```
+
+This writes a PBKDF2-SHA256 hash to `Auth/auth.json` (mode 600 — owner-read
+only). The file is **gitignored** and lives at the editor root, *outside*
+`wwwroot/`, so the web server cannot serve it directly.
+
+### Step 2 — turn auth on
+
+Edit `appsettings.json` (or `appsettings.Development.json`):
+
+```json
+{
+  "Auth": {
+    "Enabled": true,
+    "HmacKey": ""
+  }
+}
+```
+
+Restart the editor. Visiting any page (except `/Login`) will redirect you
+to the login form; posting the correct password returns a session cookie
+(`HttpOnly` + `SameSite=Strict` + `Secure` on HTTPS) and redirects to
+where you were heading.
+
+### Step 3 — bind it wherever (LAN / public Internet)
+
+```bash
+dotnet run --urls http://0.0.0.0:5070   # any host on your LAN can reach it
+ASPNETCORE_URLS=http://0.0.0.0:5070 dotnet run
+```
+
+### Footgun protection
+
+The editor refuses to start if you bind to a non-loopback address
+(`0.0.0.0`, a LAN IP, a public hostname) **without** `Auth.Enabled=true`:
+
+```
+FATAL: Server is bound to a public address but Auth.Enabled is false.
+       Refusing to start without authentication.
+
+  Detected binding:
+    http://0.0.0.0:5070
+
+  Fix one of:
+    - Set --urls to 127.0.0.1:5070 (local-only), OR
+    - Set Auth.Enabled=true in appsettings.json AND create Auth/auth.json
+      via `dotnet run --init-auth`.
+```
+
+So you can't accidentally publish the editor to the network without a
+password in place.
+
+### Rotating the password
+
+**While signed in**: visit `/ChangePassword` (or click the 🔐 user menu
+in the header → "🔑 Change password"). Fill in current + new password +
+confirmation. The endpoint verifies the current password, derives a
+fresh PBKDF2 hash, atomically rewrites `Auth/auth.json` (write to
+`.tmp` + rename — never half-written), and clears the in-memory HMAC key.
+Every existing session becomes invalid immediately; you'll be bounced
+back to `/Login` to sign in with the new password.
+
+**Without being signed in** (e.g. lost the password): re-run
+`dotnet run -- --init-auth`. It will overwrite `Auth/auth.json` (keeping
+the same path). All existing session cookies become invalid on the next
+request because the HMAC key is derived from the password hash.
+
+Either way, the new password must be at least 8 characters and must
+differ from the current one.
+
+### Docker / shared-secret deployments
+
+Override the auth.json path with `STATIQ_EDITOR_AUTH_FILE=/run/secrets/auth.json`
+(env var), and override the HMAC key with `Auth.HmacKey` in
+`appsettings.json`. Useful when auth.json lives in a Docker secret and
+you want to rotate the HMAC key independently.
+
+### Threat model this covers
+
+- ✅ Anyone who can reach the editor port must present a password to do
+  anything (read, write, delete posts; trigger builds; deploy).
+- ✅ Cross-site form submissions are blocked by CSRF token check.
+- ✅ Sessions are stateless HMAC-signed tokens — no DB, no memory table,
+  but the cookie is `HttpOnly` so XSS can't steal it.
+- ⚠️ **Not covered**: rate limiting (someone can spam the login endpoint).
+  Run behind a reverse proxy (nginx, Caddy) if that worries you.
+- ⚠️ **Not covered**: multi-user / per-site permissions. Everyone with
+  the password can edit every site. Add an OAuth layer if you need that.
+- ⚠️ **Not covered**: HTTPS — the editor speaks plain HTTP on whatever
+  port you bind it to. Use a reverse proxy for TLS termination in
+  production.
+
+If you outgrow any of those, swap the implementation — the middleware
+contract is just "redirect 302 to /Login or 401 JSON for /api/*"; you can
+swap `AuthService` for ASP.NET Core Identity or an OAuth handler without
+touching the rest of the editor.
+
+---
+
 ## Limitations (by design)
 
-- **No multi-user.** The editor binds to `127.0.0.1`. Don't expose it on a LAN without auth.
+- **No multi-user.** The editor binds to `127.0.0.1` by default, but you
+  can opt into a single-password gate (see *Authentication* below). Anyone
+  with the password can edit every site.
 - **No cloud sync.** Files live on your disk. If your laptop dies, so does your content — git push is your backup.
 - **No live preview.** You click **Build** to render; the editor doesn't watch files.
 - **No image optimization pipeline.** `webp` upload is just a re-encode; no responsive sizes, no lazy loading generation.

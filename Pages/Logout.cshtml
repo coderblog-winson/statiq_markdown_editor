@@ -1,0 +1,15 @@
+@page
+@model StatiqMarkdownEditor.Pages.LogoutModel
+@{
+    Layout = "_Layout";
+    ViewData["Title"] = "Signed out";
+}
+
+<link rel="stylesheet" href="~/css/auth.css" asp-append-version="true" />
+
+<div class="auth-card auth-card--login">
+    <div class="auth-icon">👋</div>
+    <h1 class="auth-title">Signed out</h1>
+    <p class="auth-lede">Your session cookie has been cleared.</p>
+    <a href="/Login" class="auth-btn auth-btn--primary">Sign back in →</a>
+</div>

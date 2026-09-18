@@ -95,6 +95,40 @@
          site-wide. -->
     <script src="~/js/site-builder.js" asp-append-version="true"></script>
 
+    <!-- User menu (auth only): injected after page load by asking
+         /api/auth/status whether auth is enabled. When it is, show a
+         🔐 dropdown with "Change password" and "Sign out" links in
+         the header. Pure-JS so the layout stays unaware of auth. -->
+    <script>
+        (function () {
+            fetch('/api/auth/status', { credentials: 'same-origin' })
+                .then(function (r) { return r.json(); })
+                .then(function (s) {
+                    if (!s || !s.enabled) return;
+                    var right = document.querySelector('.header-right');
+                    if (!right) return;
+                    var wrap = document.createElement('span');
+                    wrap.className = 'user-menu-wrap';
+                    wrap.innerHTML =
+                        '<button type="button" class="nav-link nav-action" id="user-menu-btn" ' +
+                        'title="Account" aria-label="Account">🔐</button>' +
+                        '<div class="user-menu" id="user-menu" hidden>' +
+                        '  <a href="/ChangePassword" class="user-menu-item">🔑 Change password</a>' +
+                        '  <a href="/Logout" class="user-menu-item">↩ Sign out</a>' +
+                        '</div>';
+                    right.appendChild(wrap);
+                    var btn = document.getElementById('user-menu-btn');
+                    var menu = document.getElementById('user-menu');
+                    btn.addEventListener('click', function (e) {
+                        e.stopPropagation();
+                        menu.hidden = !menu.hidden;
+                    });
+                    document.addEventListener('click', function () { menu.hidden = true; });
+                })
+                .catch(function () { /* swallow — auth off or server down */ });
+        })();
+    </script>
+
     @RenderSection("Scripts", required: false)
 </body>
 </html>
