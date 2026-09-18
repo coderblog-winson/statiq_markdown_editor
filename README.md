@@ -311,6 +311,87 @@ The editor exposes a small JSON API if you want to script it:
 
 ---
 
+## Packaging as a desktop app
+
+The editor ships as an **Electron shell wrapping the ASP.NET Core backend**. You can build a standalone `.app` (macOS) that bundles the .NET runtime + Razor Pages + the editor UI — users don't need .NET or Node installed.
+
+### Prerequisites
+
+- **.NET 9 SDK** (same one used for development)
+- **Node 18+** and npm (only for the build host)
+- Run `npm install` once to pull Electron 32 + electron-builder 25
+
+### Build commands
+
+```bash
+# 1. Publish the backend as a single-file self-contained binary
+npm run publish:server
+# → dist/server/StatiqMarkdownEditor  (one executable, contains .NET runtime)
+
+# 2a. Package for macOS (Apple Silicon, unpacked .app directory)
+npm run package:mac
+
+# 2b. Package for macOS as a DMG installer
+npm run package:mac-dmg
+
+# 3. Output
+dist/mac/Statiq Markdown Editor.app
+# or  dist/mac/Statiq Markdown Editor-1.0.0-arm64.dmg
+```
+
+The `.app` is fully self-contained: double-click launches the ASP.NET backend on `127.0.0.1:5070` and the Electron window opens the editor UI. Quitting the app tears both down.
+
+### Running from source (dev loop)
+
+```bash
+npm start
+# → publish:server + electron .
+# Live editor: edit Razor pages, then Cmd-R in the Electron window
+# to restart with the new code (or `dotnet build && npm start` again).
+```
+
+### Cross-platform targets
+
+`package.json` ships with a **macOS arm64-only** target by default (the development host). To add Windows or Linux, extend the `build` block:
+
+```jsonc
+"build": {
+  "appId": "com.winsonet.statiq-markdown-editor",
+  "productName": "Statiq Markdown Editor",
+  "mac": {
+    "target": [{ "target": "dmg", "arch": ["arm64"] }],
+    "hardenedRuntime": false, "gatekeeperAssess": false, "identity": null
+  },
+  "win": {
+    "target": [{ "target": "nsis", "arch": ["x64"] }]
+  },
+  "linux": {
+    "target": [{ "target": "AppImage", "arch": ["x64"] }]
+  }
+}
+```
+
+Then run with the matching electron-builder flag:
+
+```bash
+npx electron-builder --win --x64 --publish never                    # Windows NSIS installer
+npx electron-builder --linux AppImage --x64 --publish never         # Linux AppImage
+```
+
+**Note**: the `publish:server` step is hard-coded to `osx-arm64` in `package.json` — change the `-r` RID (`win-x64`, `linux-x64`) before packaging for another target, or add per-platform scripts:
+
+```jsonc
+"publish:server:win":   "dotnet publish Editor.csproj -c Release -r win-x64   --self-contained -p:PublishSingleFile=true -o ./dist/server",
+"publish:server:linux": "dotnet publish Editor.csproj -c Release -r linux-x64 --self-contained -p:PublishSingleFile=true -o ./dist/server",
+"package:win": "npm run publish:server:win && electron-builder --win --x64 --publish never"
+```
+
+### Code signing
+
+The default config has `identity: null` / `hardenedRuntime: false` — the `.app` launches fine locally and over personal distribution, but **Gatekeeper will warn on first open** for un-signed binaries. For App Store / wide distribution, set up an Apple Developer ID and replace those two fields. Same applies to Windows (`win.certificateFile`) and Linux (signing AppImage with GPG).
+
+---
+
 ## Limitations (by design)
 
 - **No multi-user.** The editor binds to `127.0.0.1`. Don't expose it on a LAN without auth.
