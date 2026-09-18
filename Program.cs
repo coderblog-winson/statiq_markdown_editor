@@ -20,7 +20,42 @@ if (args.Contains("--init-auth"))
     Environment.Exit(code);
 }
 
+// Detach from stdin so Statiq's Bootstrapper doesn't start a ConsoleListener
+// task that reads stdin. When the user hits Ctrl+C in their terminal, the
+// Kestrel host's shutdown waits on every running IHostedService / pending
+// task before returning — and Statiq's ConsoleListener holds an async
+// read on stdin that gets cancelled in a way that throws
+// ObjectDisposedException. The exception itself is harmless but it
+// stalls the shutdown long enough that the process appears unresponsive
+// (you have to pkill it from another terminal).
+//
+// Redirecting stdin to /dev/null is the cleanest fix — Statiq's
+// Bootstrapper.RunAsync() checks Console.IsInputRedirected / the
+// underlying ConsoleListener guards on a non-empty stdin and bails out
+// without registering the listener task.
+try
+{
+    Console.SetIn(TextReader.Null);
+}
+catch
+{
+    // Some hosts (Electron shell, ASP.NET test server) don't allow
+    // redirecting stdin. Swallow — the alternative (no fix) is worse
+    // than the symptom (occasional Ctrl+C stall on real terminals).
+}
+
 var builder = WebApplication.CreateBuilder(args);
+
+// Tight shutdown timeout. Default is 30 seconds, which means a stuck
+// background task (e.g. Statiq's in-process ConsoleListener holding on
+// to a stdin read after Ctrl+C) would keep the editor unresponsive for
+// half a minute before the host force-exits. 3 seconds is long enough
+// for a clean shutdown of all our own services and short enough that
+// the user doesn't get stuck wondering if Ctrl+C did anything.
+builder.Services.Configure<HostOptions>(opts =>
+{
+    opts.ShutdownTimeout = TimeSpan.FromSeconds(3);
+});
 
 builder.Services.AddRazorPages();
 builder.Services.Configure<StatiqProjectOptions>(
@@ -611,6 +646,50 @@ app.MapRazorPages();
         Console.Error.WriteLine();
         return;
     }
+}
+
+// Safety net for "Ctrl+C leaves the process hanging". Root cause:
+// Statiq's in-process Bootstrapper starts a ConsoleListener task that
+// reads stdin in a background loop. When the host's CancellationTokenSource
+// gets disposed during shutdown, the listener throws
+// ObjectDisposedException. The exception is harmless but stalls
+// GenericHost's shutdown long enough that users think the process is
+// frozen and have to `pkill -9` from another terminal.
+//
+// Two backstops, wired BEFORE app.Run() so the IServiceProvider is
+// still alive (GetRequiredService throws ObjectDisposedException if
+// called after Run() returns — we hit that the hard way once):
+//   1. ApplicationStopping hook fires a 3-second-timer force-exit.
+//      The host still runs its graceful shutdown — if it completes first
+//      we dispose the timer.
+//   2. AppDomain UnhandledException catches the post-shutdown
+//      ObjectDisposedException so it doesn't print a scary stack trace.
+{
+    var lifetime = app.Lifetime;
+    System.Threading.Timer? shutdownTimer = null;
+    shutdownTimer = new System.Threading.Timer(_ =>
+    {
+        Console.Error.WriteLine("[editor] shutdown stalled > 3s, force-exiting");
+        Environment.Exit(0);
+    });
+    lifetime.ApplicationStopping.Register(() =>
+    {
+        shutdownTimer?.Change(TimeSpan.FromSeconds(3), Timeout.InfiniteTimeSpan);
+    });
+    lifetime.ApplicationStopped.Register(() =>
+    {
+        shutdownTimer?.Dispose();
+    });
+
+    AppDomain.CurrentDomain.UnhandledException += (sender, e) =>
+    {
+        if (e.ExceptionObject is ObjectDisposedException
+            || e.ExceptionObject is AggregateException agg
+                && agg.InnerExceptions.All(x => x is ObjectDisposedException))
+        {
+            Console.Error.WriteLine("[editor] post-shutdown ObjectDisposedException swallowed");
+        }
+    };
 }
 
 app.Run();
