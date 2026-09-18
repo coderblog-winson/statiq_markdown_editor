@@ -25,7 +25,7 @@ This editor is the panel between you and `git`. It is intentionally **not** a CM
 ## 5-minute quickstart
 
 ```bash
-git clone https://github.com/winsonet/statiq_markdown_editor.git
+git clone https://github.com/coderblog-winson/statiq_markdown_editor.git
 cd statiq_markdown_editor
 dotnet run
 ```
