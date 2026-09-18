@@ -629,8 +629,8 @@ app.MapRazorPages();
         return host != "127.0.0.1" && host != "localhost" && host != "::1";
     });
 
-    var authOpts = app.Services.GetRequiredService<IOptions<AuthOptions>>().Value;
-    if (bindsPublicly && !authOpts.Enabled)
+    var authOptsMonitor = app.Services.GetRequiredService<IOptionsMonitor<AuthOptions>>();
+    if (bindsPublicly && !authOptsMonitor.CurrentValue.Enabled)
     {
         Console.Error.WriteLine();
         Console.Error.WriteLine("FATAL: Server is bound to a public address but Auth.Enabled is false.");

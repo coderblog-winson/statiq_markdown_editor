@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Configuration;
 
 namespace StatiqMarkdownEditor.Auth;
 
@@ -10,6 +11,11 @@ namespace StatiqMarkdownEditor.Auth;
 /// Bound from the "Auth" section of appsettings.json:
 ///   Auth.Enabled   = bool   (default false — local-only by design)
 ///   Auth.HmacKey   = string (optional override; falls back to passwordHash)
+///
+/// Wired via <see cref="IOptionsMonitor{T}"/> so that edits to appsettings.json
+/// take effect immediately, without restarting the ASP.NET host. The default
+/// JSON configuration provider reloads on file change (reloadOnChange: true),
+/// and IOptionsMonitor picks up the new snapshot on every CurrentValue read.
 /// </summary>
 public sealed class AuthOptions
 {
@@ -43,7 +49,7 @@ public sealed class AuthService
     public const string CsrfFormField = "_csrf";
     public const string CsrfHeaderName = "X-CSRF-Token";
 
-    private readonly AuthOptions _options;
+    private readonly IOptionsMonitor<AuthOptions> _optionsMonitor;
     private readonly ILogger<AuthService> _logger;
     private readonly string _configPath;
 
@@ -51,9 +57,12 @@ public sealed class AuthService
     private byte[]? _hmacKey;
     private readonly object _lock = new();
 
-    public AuthService(IOptions<AuthOptions> options, ILogger<AuthService> logger, IHostEnvironment env)
+    public AuthService(
+        IOptionsMonitor<AuthOptions> options,
+        ILogger<AuthService> logger,
+        IHostEnvironment env)
     {
-        _options = options.Value;
+        _optionsMonitor = options;
         _logger = logger;
         // Default path: <editor root>/Auth/auth.json (NOT under wwwroot/, so
         // the web server does not serve it). Overridable via env var for
@@ -64,14 +73,18 @@ public sealed class AuthService
             : Path.Combine(env.ContentRootPath, "Auth", "auth.json");
     }
 
-    public bool IsEnabled => _options.Enabled;
+    // Read the live Auth:Enabled value from the OptionsMonitor on every
+    // access. The JSON configuration provider reloads on file change, so
+    // toggling Auth.Enabled in appsettings.json takes effect on the very
+    // next request — no host restart needed.
+    public bool IsEnabled => _optionsMonitor.CurrentValue.Enabled;
 
     public string ConfigPath => _configPath;
 
     /// <summary>True if Enabled AND auth.json exists and parses.</summary>
     public bool IsReady()
     {
-        if (!_options.Enabled) return false;
+        if (!_optionsMonitor.CurrentValue.Enabled) return false;
         return LoadConfig() != null;
     }
 
@@ -99,8 +112,8 @@ public sealed class AuthService
                     _logger.LogError("auth.json at {Path} is malformed (missing hash/salt).", _configPath);
                     return null;
                 }
-                _hmacKey = !string.IsNullOrEmpty(_options.HmacKey)
-                    ? Encoding.UTF8.GetBytes(_options.HmacKey)
+                _hmacKey = !string.IsNullOrEmpty(_optionsMonitor.CurrentValue.HmacKey)
+                    ? Encoding.UTF8.GetBytes(_optionsMonitor.CurrentValue.HmacKey)
                     : Encoding.UTF8.GetBytes(_config.PasswordHash);
                 return _config;
             }
