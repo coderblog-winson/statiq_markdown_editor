@@ -36,6 +36,7 @@ public enum ScriptKind
 public class ScriptRunnerService
 {
     private readonly string _editorRoot;
+    private readonly StatiqRunner _runner;
     private readonly ILogger<ScriptRunnerService> _log;
 
     // Per-kind state — only one running process per kind at a time.
@@ -52,9 +53,13 @@ public class ScriptRunnerService
         public required DateTime StartedAt { get; init; }
     }
 
-    public ScriptRunnerService(IWebHostEnvironment env, ILogger<ScriptRunnerService> log)
+    public ScriptRunnerService(
+        IWebHostEnvironment env,
+        StatiqRunner runner,
+        ILogger<ScriptRunnerService> log)
     {
         _editorRoot = env.ContentRootPath;
+        _runner = runner;
         _log = log;
     }
 
@@ -90,6 +95,21 @@ public class ScriptRunnerService
         // restart, or user double-clicked). Kill + restart every time.
         if (kind == ScriptKind.Preview)
         {
+            // Build first. preview.sh fails fast (exit 1) when
+            // sites/<name>/output/index.html doesn't exist, which the
+            // user perceives as "preview button is broken" — but
+            // really they just hadn't built yet. Running an in-process
+            // build (the editor's own Bootstrapper, fast — no script
+            // spawn) before launching the HTTP server turns the
+            // Preview button into a single click that always works.
+            var buildResult = _runner.BuildAsync(siteName).GetAwaiter().GetResult();
+            if (!buildResult.Success)
+            {
+                return (false,
+                    $"preview aborted: build failed ({buildResult.Error ?? "see build log"})",
+                    null);
+            }
+
             // If WE have a recorded running process for this kind, kill
             // it first so we don't have two PIDs racing for the port.
             if (_running.TryGetValue(kind, out var prev) && !HasExited(prev.Process))
