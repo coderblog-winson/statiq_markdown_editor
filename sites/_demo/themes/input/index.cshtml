@@ -4,10 +4,27 @@
     // back to the source filename ("index" → "Input"). Override here so the
     // <title> renders correctly.
     var title = "Home";
-    var posts = Document.GetChildren()
+    // The home page is a top-level archive — it lists every input post
+    // (regardless of tag/group), not the children of this specific
+    // document. Context.Inputs is the right source here; Document.GetChildren()
+    // only returns children for documents that act as a parent (e.g. a
+    // tag-page that groups posts by tag).
+    var posts = Context.Inputs
         .Where(c => !c.GetBool("Draft", false))
         .OrderByDescending(c => c.Get<DateTime>("Date"))
         .ToList();
+
+    // SiteConfig.StripMonthFromPostUrls rewrites the OUTPUT filename
+    // (writes posts/foo.html instead of posts/2026-09/foo.html) but
+    // doesn't touch the Link metadata that GetLink() returns, so we
+    // strip it again here so the home <a href> lines up with the
+    // actual file path on disk.
+    static string StripMonthFromUrl(string url)
+    {
+        if (string.IsNullOrEmpty(url)) return url;
+        var m = System.Text.RegularExpressions.Regex.Match(url, @"/posts/\d{4}-\d{2}/(.+\.html?)$");
+        return m.Success ? "/posts/" + m.Groups[1].Value : url;
+    }
 }
 
 <section class="list-page">
@@ -25,7 +42,7 @@
             <li class="post-list-item">
                 <article>
                     <header>
-                        <h2><a href="@(post.GetLink())">@postTitle</a></h2>
+                        <h2><a href="@(StripMonthFromUrl(post.GetLink()))">@postTitle</a></h2>
                         <div class="post-meta">
                             <time datetime="@postDate.ToString("yyyy-MM-dd")">@postDate.ToString("MMM d, yyyy")</time>
                             @if (!string.IsNullOrEmpty(postCategory)) {

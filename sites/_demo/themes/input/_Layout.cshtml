@@ -4,7 +4,13 @@
     var title = Document.GetString("Title") ?? "Statiq Markdown Editor Demo";
     var description = Document.GetString("Description")
         ?? "A web-based editor for Statiq markdown posts. Single-user local tool — no cloud, no telemetry.";
-    var canonical = (Document.GetLink(true) ?? "").Replace("http://", "https://");
+    // Strip the YYYY-MM month subdir that SetDestination rewrote off disk
+    // but that GetLink() still returns, so canonical/og:url match reality.
+    var rawLink = Document.GetLink(true) ?? "";
+    var canonical = System.Text.RegularExpressions.Regex.Replace(
+        rawLink.Replace("http://", "https://"),
+        @"/posts/\d{4}-\d{2}/",
+        "/posts/");
     var ogImage = Document.GetString("Image");
 
     // Page title: if the page defines a "Title" section (just plain text),
