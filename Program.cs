@@ -44,7 +44,35 @@ catch
     // than the symptom (occasional Ctrl+C stall on real terminals).
 }
 
-var builder = WebApplication.CreateBuilder(args);
+// Decide content root BEFORE CreateBuilder. ASP.NET Core 8+ refuses to
+// let you change ContentRoot via builder.WebHost.UseContentRoot after
+// CreateBuilder — you have to pass it via WebApplicationOptions. (Throws
+// NotSupportedException at runtime otherwise.)
+//
+// Why we override: single-file publish on macOS resolves ContentRoot to
+// the *original* source-project root (via AppContext.BaseDirectory), not
+// the packaged executable's directory. For the packaged .app case we want
+// ContentRoot to be the .app's `Contents/Resources/server/` directory so
+// that wwwroot/, appsettings.json, Auth/, sites/, themes/ all resolve
+// relative to the actual install location — NOT the source tree on a
+// developer's machine.
+//
+// Heuristic: if `wwwroot/` exists next to the running exe, we are in a
+// packaged layout (Electron's main.js sets `cwd: path.dirname(exe)` and
+// the extraResources rule copies the whole dist/server/ tree alongside
+// the binary). Otherwise fall back to AppContext.BaseDirectory which is
+// the right answer for `dotnet run` / dev loop.
+var exeDir = Path.GetDirectoryName(Environment.ProcessPath) ?? "";
+var resolvedContentRoot =
+    !string.IsNullOrEmpty(exeDir) && Directory.Exists(Path.Combine(exeDir, "wwwroot"))
+        ? exeDir
+        : AppContext.BaseDirectory;
+
+var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+{
+    Args = args,
+    ContentRootPath = resolvedContentRoot,
+});
 
 // Tight shutdown timeout. Default is 30 seconds, which means a stuck
 // background task (e.g. Statiq's in-process ConsoleListener holding on

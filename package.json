@@ -5,7 +5,7 @@
   "private": true,
   "main": "electron/main.js",
   "scripts": {
-    "publish:server": "dotnet publish Editor.csproj -c Release -r osx-arm64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o ./dist/server",
+    "publish:server": "dotnet publish Editor.csproj -c Release -r osx-arm64 --self-contained -o ./dist/server",
     "start": "npm run publish:server && electron .",
     "package:mac": "npm run publish:server && electron-builder --mac --arm64 --publish never",
     "package:mac-dmg": "npm run publish:server && electron-builder --mac --arm64 dmg --publish never"
@@ -15,7 +15,7 @@
     "electron-builder": "^25.1.8"
   },
   "build": {
-    "appId": "com.winsonet.statiq-markdown-editor",
+    "appId": "in.coderblog.statiq-markdown-editor",
     "productName": "Statiq Markdown Editor",
     "directories": {
       "output": "dist/mac"
@@ -27,8 +27,14 @@
     ],
     "extraResources": [
       {
-        "from": "dist/server/StatiqMarkdownEditor",
-        "to": "server/StatiqMarkdownEditor"
+        "from": "dist/server",
+        "to": "server",
+        "filter": [
+          "**/*",
+          "!**/*.pdb",
+          "!**/package.json",
+          "!**/package-lock.json"
+        ]
       }
     ],
     "mac": {
