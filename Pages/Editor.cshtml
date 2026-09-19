@@ -125,3 +125,19 @@
     <script src="~/js/languagetool.js" asp-append-version="true"></script>
     <script src="~/js/editor.js" asp-append-version="true"></script>
 }
+
+<!-- Custom prompt/confirm modal. Replaces window.prompt()/confirm() which
+     Electron's BrowserWindow disables by default (returns null/throws).
+     The two helpers (showPromptModal, showConfirmModal) below are
+     Promise-based wrappers around the native <dialog> element. -->
+<dialog id="editor-modal" class="editor-modal">
+    <form method="dialog" class="editor-modal-form" id="editor-modal-form">
+        <h3 class="editor-modal-title" id="editor-modal-title"></h3>
+        <p class="editor-modal-message" id="editor-modal-message" hidden></p>
+        <input type="text" class="editor-modal-input" id="editor-modal-input" />
+        <div class="editor-modal-actions">
+            <button type="button" class="btn btn-ghost" id="editor-modal-cancel" value="cancel">Cancel</button>
+            <button type="button" class="btn btn-primary" id="editor-modal-ok" value="ok">OK</button>
+        </div>
+    </form>
+</dialog>

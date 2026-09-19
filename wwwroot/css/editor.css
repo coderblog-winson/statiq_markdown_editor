@@ -488,3 +488,64 @@
    site.css so they apply to the top-nav version of the buttons
    site-wide. The Editor page no longer has its own Preview / Deploy
    buttons — they live in _Layout.cshtml. */
+
+/* ---------- Prompt / confirm modal ----------
+   Replaces window.prompt()/confirm() which Electron's BrowserWindow
+   disables by default. Uses the browser-native <dialog> element so we
+   get focus trap + ESC-to-close + backdrop styling for free. */
+.editor-modal {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    max-width: 440px;
+    width: 90vw;
+    box-shadow: 0 16px 48px rgba(0,0,0,0.25), 0 4px 12px rgba(0,0,0,0.15);
+    font: inherit;
+}
+.editor-modal::backdrop {
+    background: rgba(0,0,0,0.45);
+    backdrop-filter: blur(2px);
+}
+.editor-modal-form {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 20px 24px;
+}
+.editor-modal-title {
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: 600;
+    font-family: var(--font-serif);
+    color: var(--text);
+}
+.editor-modal-message {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 0.92rem;
+    line-height: 1.5;
+}
+.editor-modal-input {
+    width: 100%;
+    padding: 9px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text);
+    font: inherit;
+    font-size: 0.95rem;
+    box-sizing: border-box;
+}
+.editor-modal-input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+.editor-modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 4px;
+}

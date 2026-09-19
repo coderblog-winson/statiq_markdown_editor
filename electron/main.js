@@ -187,8 +187,39 @@ async function createWindow(port) {
         },
     });
     win.loadURL(`http://127.0.0.1:${port}/`);
-    // Open devtools only when explicitly requested (e.g. F12 from menu)
-    // For now, leave it off — surface bugs to the user via dialogs.
+    // Forward renderer console messages to the host process stdout + a
+    // /tmp log file. Makes packaged-mode debugging possible without
+    // opening DevTools manually (the host process is detached from any
+    // terminal, so a file is the reliable sink).
+    const diagLog = (line) => {
+        try {
+            require('fs').appendFileSync('/tmp/statiq-editor-diag.log', line + '\n');
+        } catch (_) { /* /tmp not writable, swallow */ }
+        console.log(line);
+    };
+    win.webContents.on('console-message', (event) => {
+        const lvl = event.level || 'log';
+        const loc = `${event.sourceId || '?'}:${event.lineNumber || '?'}`;
+        diagLog(`[renderer:${lvl}] ${event.message}  (${loc})`);
+    });
+    win.webContents.on('render-process-gone', (event, details) => {
+        diagLog(`[renderer:gone] reason=${details.reason} exitCode=${details.exitCode}`);
+    });
+    win.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
+        diagLog(`[renderer:load-failed] ${validatedURL}: ${errorDescription} (${errorCode})`);
+    });
+    // DevTools is closed by default for a clean production UX. Press F12
+    // (or Cmd+Opt+I) to toggle it open when debugging. Console output is
+    // always forwarded to /tmp/statiq-editor-diag.log via the
+    // console-message handler above so failures leave a paper trail
+    // whether or not DevTools is open.
+    // Allow F12 / Cmd+Opt+I to toggle DevTools.
+    win.webContents.on('before-input-event', (event, input) => {
+        if (input.key === 'F12' ||
+            (input.key === 'I' && input.meta && input.alt)) {
+            win.webContents.toggleDevTools();
+        }
+    });
     win.on('closed', () => { /* nothing else to do; main process stays alive */ });
     return win;
 }

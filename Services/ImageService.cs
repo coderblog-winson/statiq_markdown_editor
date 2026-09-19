@@ -280,6 +280,67 @@ public class ImageService
     }
 
     // ----------------------------------------------------------------
+    //  Delete
+    // ----------------------------------------------------------------
+
+    /// <summary>
+    /// Delete the on-disk file under <c>sites/&lt;active&gt;/input/images/</c>
+    /// that the given URL resolves to. Used by the post-delete cascade so
+    /// that removing an article also removes its uploaded figures.
+    ///
+    /// Safety: only ever touches files under the configured images root, and
+    /// never follows symlinks — a hostile markdown link could otherwise
+    /// redirect to anywhere on disk.
+    /// </summary>
+    public (bool ok, string? error) DeleteImageByUrl(string url)
+    {
+        if (string.IsNullOrEmpty(ImagesRoot))
+            return (false, "no active site — pick one in Settings");
+
+        // Reject anything that doesn't start with /images/. CDN URLs,
+        // /assets/ (theme-shipped), absolute http(s)://... — none of those
+        // are user uploads, so we never touch them.
+        var trimmed = (url ?? string.Empty).TrimStart('/');
+        // URL is "/images/2026-09/foo.webp" — strip the "/images/" prefix so we
+        // don't double-up with ImagesRoot (which already ends in /images).
+        const string prefix = "images/";
+        if (!trimmed.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            return (false, $"url does not start with /images/: {url}");
+        trimmed = trimmed[prefix.Length..];
+        if (string.IsNullOrEmpty(trimmed))
+            return (false, "url resolves to images/ root, refusing");
+
+        var full = Path.GetFullPath(Path.Combine(
+            ImagesRoot, trimmed.Replace('/', Path.DirectorySeparatorChar)));
+        var rootFull = Path.GetFullPath(ImagesRoot);
+        if (!full.StartsWith(rootFull + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+            && !string.Equals(full, rootFull, StringComparison.Ordinal))
+        {
+            return (false, $"refusing to delete outside images root: {url}");
+        }
+
+        if (!File.Exists(full))
+            return (false, $"file not found: {url}");
+
+        // Symlink check — same reason as /api/local-image's check.
+        var attrs = File.GetAttributes(full);
+        if ((attrs & FileAttributes.ReparsePoint) != 0)
+            return (false, $"refusing to delete a symlink: {url}");
+
+        try
+        {
+            File.Delete(full);
+            _log.LogInformation("Deleted image: {Path}", full);
+            return (true, null);
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Image delete failed: {Path}", full);
+            return (false, ex.Message);
+        }
+    }
+
+    // ----------------------------------------------------------------
     //  Slug helper
     // ----------------------------------------------------------------
 

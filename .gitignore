@@ -30,6 +30,7 @@ dist/
 # The only thing that stays public in themes/ is _demo.
 sites/*
 !sites/_demo/
+!sites/README.md
 
 themes/_demo/
 

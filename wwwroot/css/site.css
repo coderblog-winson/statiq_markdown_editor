@@ -290,6 +290,25 @@ h3 { font-size: 1.15rem; }
 .modal-body textarea { resize: vertical; min-height: 60px; }
 .modal-body .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .modal-body .hint { font-size: 12px; color: var(--text-muted); margin: 0; }
+/* Row-style checkbox label — overrides the default column flex on .modal-body label.
+   Used by the delete modal's "also delete referenced images" checkbox. */
+.modal-body label.modal-checkbox {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}
+.modal-body label.modal-checkbox input[type="checkbox"] {
+  margin: 2px 0 0 0;
+  width: auto;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  accent-color: var(--accent);
+}
+.modal-body label.modal-checkbox span { font-weight: 400; line-height: 1.4; }
 .modal-footer {
   display: flex;
   justify-content: flex-end;

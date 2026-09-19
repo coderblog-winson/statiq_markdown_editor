@@ -116,6 +116,16 @@ public static class CustomPipelines
                     }))
                 );
 
+                // ---- External-link target=_blank (post-process): ----
+                // The HTML produced by RenderContentPostProcessTemplates is what
+                // we want to touch here — by this stage the page body has been
+                // wrapped in the theme layout, so the regex will see both
+                // markdown-rendered links AND any hard-coded links from the
+                // layout (footer attribution, GitHub button, etc.). Replaces
+                // the old ProcessModules.Add(ExternalLinkTargetModule()) call
+                // which only ran on raw markdown and missed layout links.
+                contentPipeline.PostProcessModules.Add(new ExternalLinkTargetModule());
+
                 // ---- Tags pipeline: ----
                 engine.Pipelines.Add("Tags", new Pipeline
                 {
@@ -171,7 +181,6 @@ public static class CustomPipelines
             {
                 // --- Process modules (during content rendering) ---
                 pipeline.ProcessModules.Add(new TagAutoLinkModule());
-                pipeline.ProcessModules.Add(new ExternalLinkTargetModule());
 
                 // RSS feed source: any markdown doc that's not a draft and has a Date.
                 pipeline.ProcessModules.Add(new SetMetadata("Rss", Config.FromDocument(doc =>

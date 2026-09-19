@@ -70,6 +70,10 @@
         </header>
         <div class="modal-body">
             <p>Permanently delete <code id="delete-name"></code>? This cannot be undone.</p>
+            <label class="modal-checkbox">
+                <input type="checkbox" id="delete-images">
+                <span>Also delete referenced images (any <code>/images/...</code> files used in this post)</span>
+            </label>
         </div>
         <footer class="modal-footer">
             <button type="button" class="btn btn-ghost" data-close>Cancel</button>

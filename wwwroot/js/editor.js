@@ -163,6 +163,104 @@
         return r.json();
     }
 
+    // Promise-based wrappers around the native <dialog> element. We can't
+    // use window.prompt()/confirm() because Electron's BrowserWindow
+    // disables them by default (returns null/throws). The dialog HTML lives
+    // in Editor.cshtml; these helpers just drive it.
+    const _modal = document.getElementById('editor-modal');
+    const _modalTitle = document.getElementById('editor-modal-title');
+    const _modalMessage = document.getElementById('editor-modal-message');
+    const _modalInput = document.getElementById('editor-modal-input');
+    const _modalOk = document.getElementById('editor-modal-ok');
+    const _modalCancel = document.getElementById('editor-modal-cancel');
+
+    function _modalReset() {
+        _modalTitle.textContent = '';
+        _modalMessage.textContent = '';
+        _modalMessage.hidden = true;
+        _modalInput.value = '';
+        _modalInput.hidden = false;
+        _modalOk.textContent = 'OK';
+        _modalCancel.hidden = false;
+    }
+
+    /**
+     * Show a prompt dialog. Resolves with the entered string, or `null`
+     * if the user cancelled (clicked Cancel, pressed ESC, or closed the
+     * dialog via the backdrop).
+     *
+     * @param {string} title       Title text shown at the top.
+     * @param {string} defaultVal  Pre-filled value (use '' for blank).
+     * @param {string} placeholder Optional placeholder hint.
+     * @returns {Promise<string|null>}
+     */
+    function showPromptModal(title, defaultVal = '', placeholder = '') {
+        return new Promise((resolve) => {
+            _modalReset();
+            _modalTitle.textContent = title;
+            _modalInput.value = defaultVal;
+            _modalInput.placeholder = placeholder;
+            // OK = submit, Cancel = cancel. Whichever fires first wins.
+            const onOk = () => { cleanup(); _modal.close('ok'); resolve(_modalInput.value); };
+            const onCancel = () => { cleanup(); _modal.close('cancel'); resolve(null); };
+            const cleanup = () => {
+                _modalOk.removeEventListener('click', onOk);
+                _modalCancel.removeEventListener('click', onCancel);
+                _modalInput.removeEventListener('keydown', onInputKey);
+                _modal.removeEventListener('close', onClose);
+            };
+            const onInputKey = (e) => {
+                if (e.key === 'Enter') { e.preventDefault(); onOk(); }
+                else if (e.key === 'Escape') { e.preventDefault(); onCancel(); }
+            };
+            const onClose = () => {
+                // If neither button was clicked (e.g. ESC), resolve with null.
+                cleanup();
+                resolve(null);
+            };
+            _modalOk.addEventListener('click', onOk);
+            _modalCancel.addEventListener('click', onCancel);
+            _modalInput.addEventListener('keydown', onInputKey);
+            // 'close' fires after dialog.close(); we rely on it only as
+            // a fallback for the ESC path. Otherwise we already resolved.
+            _modal.addEventListener('close', onClose, { once: true });
+            _modal.showModal();
+            _modalInput.focus();
+            _modalInput.select();
+        });
+    }
+
+    /**
+     * Show a yes/no confirmation. Resolves with `true` if user clicks OK,
+     * `false` for any cancel path.
+     *
+     * @param {string} message  Confirmation message (also used as title).
+     * @returns {Promise<boolean>}
+     */
+    function showConfirmModal(message) {
+        return new Promise((resolve) => {
+            _modalReset();
+            _modalTitle.textContent = message;
+            _modalInput.hidden = true;            // no text input needed
+            _modalMessage.hidden = true;          // title is the message
+            _modalOk.textContent = 'Confirm';
+            _modalCancel.hidden = false;
+            const onOk = () => { cleanup(); _modal.close('ok'); resolve(true); };
+            const onCancel = () => { cleanup(); _modal.close('cancel'); resolve(false); };
+            const cleanup = () => {
+                _modalOk.removeEventListener('click', onOk);
+                _modalCancel.removeEventListener('click', onCancel);
+                _modal.removeEventListener('close', onClose);
+            };
+            const onClose = () => { cleanup(); resolve(false); };
+            _modalOk.addEventListener('click', onOk);
+            _modalCancel.addEventListener('click', onCancel);
+            _modal.addEventListener('close', onClose, { once: true });
+            _modal.showModal();
+            _modalOk.focus();
+        });
+    }
+
     function setStatus(left, right) {
         if (left !== undefined) els.statusLeft.textContent = left;
         if (right !== undefined) els.statusRight.textContent = right;
@@ -234,9 +332,9 @@
         }
     }
 
-    function discard() {
+    async function discard() {
         if (!editor) return;
-        if (!confirm('Discard unsaved changes?')) return;
+        if (!await showConfirmModal('Discard unsaved changes?')) return;
         editor.setValue(initialValue);
         lastSavedValue = initialValue;
         refreshDirty();
@@ -652,29 +750,37 @@
         const sel = editor.getSelection();
         const model = editor.getModel();
         const selected = model.getValueInRange(sel);
-        const url = window.prompt('Link URL', 'https://');
-        if (url === null) return; // cancelled
-        const safeUrl = url.trim() || 'https://';
-        if (selected && selected.length > 0) {
-            const text = '[' + selected + '](' + safeUrl + ')';
-            editor.executeEdits('fmt', [{ range: sel, text, forceMoveMarkers: true }]);
-            // Select the URL so the user can type over it
-            const startCol = sel.startColumn + selected.length + 3; // [text](
-            const endCol = startCol + safeUrl.length;
-            editor.setSelection(new monaco.Range(sel.startLineNumber, startCol, sel.endLineNumber, endCol));
-        } else {
-            const pos = editor.getPosition();
-            const text = '[' + (window.prompt('Link text', '') || '') + '](' + safeUrl + ')';
-            editor.executeEdits('fmt', [{
-                range: new monaco.Range(pos.lineNumber, pos.column, pos.lineNumber, pos.column),
-                text,
-                forceMoveMarkers: true,
-            }]);
-            const startCol = pos.column + 1;
-            const endCol = startCol + (text.length - safeUrl.length - 3); // highlight the link text
-            editor.setSelection(new monaco.Range(pos.lineNumber, startCol, pos.lineNumber, endCol));
-        }
-        editor.focus();
+        // Use the custom <dialog>-backed modal instead of window.prompt —
+        // Electron's BrowserWindow disables window.prompt() by default.
+        showPromptModal('Link URL', 'https://', 'https://example.com').then(url => {
+            if (url === null) return; // cancelled
+            const safeUrl = url.trim() || 'https://';
+            if (selected && selected.length > 0) {
+                const text = '[' + selected + '](' + safeUrl + ')';
+                editor.executeEdits('fmt', [{ range: sel, text, forceMoveMarkers: true }]);
+                const startCol = sel.startColumn + selected.length + 3;
+                const endCol = startCol + safeUrl.length;
+                editor.setSelection(new monaco.Range(sel.startLineNumber, startCol, sel.endLineNumber, endCol));
+            } else {
+                editor.getPosition();
+                // Second prompt: link text (only when nothing was selected).
+                showPromptModal('Link text', '', 'display text').then(textVal => {
+                    const linkText = textVal === null ? '' : textVal;
+                    const pos = editor.getPosition();
+                    const text = '[' + linkText + '](' + safeUrl + ')';
+                    editor.executeEdits('fmt', [{
+                        range: new monaco.Range(pos.lineNumber, pos.column, pos.lineNumber, pos.column),
+                        text,
+                        forceMoveMarkers: true,
+                    }]);
+                    const startCol = pos.column + 1;
+                    const endCol = startCol + linkText.length;
+                    editor.setSelection(new monaco.Range(pos.lineNumber, startCol, pos.lineNumber, endCol));
+                });
+                return; // don't focus twice
+            }
+            editor.focus();
+        });
     }
 
     // Image upload actions (toolbar button) — wrap the existing paste handler.
@@ -880,6 +986,107 @@
         return (n / 1024 / 1024).toFixed(2) + ' MB';
     }
 
+    // Same flow as handleImagePaste but the source is a *local file path*
+    // (e.g. user copied a .png from Finder). The BrowserWindow is loaded
+    // from http://127.0.0.1:<port>, so we can't fetch file:// URLs directly
+    // (cross-scheme, CSP, etc.) — instead we hand the path to the server,
+    // which reads + uploads + returns the same JSON shape as PUT /api/images.
+    // From there the placeholder/final-text logic is identical to a clipboard
+    // paste, so we factor it into _runUpload(doFetch) below.
+    async function handleLocalImagePaste(filePath) {
+        const doFetch = async () => {
+            const url = '/api/local-image?path=' + encodeURIComponent(filePath);
+            const r = await fetch(url);
+            const json = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error(json?.error || 'HTTP ' + r.status);
+            return json;
+        };
+        return _runImageUpload(doFetch, filePath, filePath.split(/[\\/]/).pop() || 'local-image');
+    }
+
+    // Shared upload pipeline. `doFetch()` performs the actual HTTP call
+    // and resolves with the server JSON (same shape as PUT /api/images and
+    // GET /api/local-image). `filePath` is only used as a fallback
+    // "suggestedName" source.
+    async function _runImageUpload(doFetch, filePath, fallbackName) {
+        const uploadId = makeUuid();
+        const marker = `__up_${uploadId.slice(0, 8)}__`;
+        const PLACEHOLDER_PREFIX = `<?# Figure src="" alt="`;
+        const placeholderText =
+            `<?# Figure src="" alt="${marker} ⏳ uploading…" ?>\n\n` +
+            `Fig. ?? — uploading…\n\n` +
+            `<?#/ Figure ?>\n`;
+        const sel = editor.getSelection();
+        const needsLeadingNewline = sel.startColumn > 1;
+        const insertText = (needsLeadingNewline ? '\n' : '') + placeholderText;
+        editor.executeEdits('image-paste', [{
+            range: new monaco.Range(
+                sel.startLineNumber, sel.startColumn,
+                sel.startLineNumber, sel.startColumn
+            ),
+            text: insertText,
+            forceMoveMarkers: true,
+        }]);
+        setStatus('Uploading image…');
+
+        try {
+            const json = await doFetch();
+            const model = editor.getModel();
+            const fullText = model.getValue();
+            const markerIdx = fullText.indexOf(marker);
+            if (markerIdx === -1) {
+                setStatus(`Image saved but placeholder was removed: ${json.filename}`);
+                toast('Image saved (placeholder gone): ' + json.filename, 'info', 2400);
+                return;
+            }
+            const phStartOffset = markerIdx - PLACEHOLDER_PREFIX.length;
+            const startPos = model.getPositionAt(phStartOffset);
+            const endPos = model.getPositionAt(phStartOffset + placeholderText.length);
+            const placeholderRange = new monaco.Range(
+                startPos.lineNumber, startPos.column,
+                endPos.lineNumber, endPos.column
+            );
+            const realCount = (fullText.match(/<\?#\s*Figure\b[^>]*alt=""/g) || []).length;
+            const figCount = realCount + 1;
+            const figStr = String(figCount).padStart(2, '0');
+            const finalText =
+                `<?# Figure src="${json.url}" alt="" ?>\n\n` +
+                `Fig. ${figStr} — \n\n` +
+                `<?#/ Figure ?>\n`;
+            const altAttrOffset = finalText.indexOf('alt=""') + 'alt="'.length;
+            replaceRange(placeholderRange, finalText);
+            const cursorAbs = phStartOffset + altAttrOffset;
+            const cursorPos = model.getPositionAt(cursorAbs);
+            editor.setSelection(new monaco.Selection(
+                cursorPos.lineNumber, cursorPos.column,
+                cursorPos.lineNumber, cursorPos.column
+            ));
+            editor.revealPositionInCenter(cursorPos);
+            editor.focus();
+            setStatus(`Image saved: ${json.filename} (${json.width}×${json.height}, ${formatBytes(json.sizeBytes)})`);
+            toast('Image uploaded: ' + json.filename, 'success', 2200);
+        } catch (err) {
+            const model = editor.getModel();
+            const fullText = model.getValue();
+            const markerIdx = fullText.indexOf(marker);
+            if (markerIdx !== -1) {
+                const phStartOffset = markerIdx - PLACEHOLDER_PREFIX.length;
+                const startPos = model.getPositionAt(phStartOffset);
+                const endPos = model.getPositionAt(phStartOffset + placeholderText.length);
+                const errorText =
+                    `<?# Figure src="" alt="❌ upload failed: ${err.message.replace(/"/g, "'")}" ?>\n\n` +
+                    `Fig. ?? — upload failed\n\n` +
+                    `<?#/ Figure ?>\n`;
+                replaceRange(new monaco.Range(
+                    startPos.lineNumber, startPos.column,
+                    endPos.lineNumber, endPos.column
+                ), errorText);
+            }
+            setStatus('Image upload failed: ' + err.message);
+            toast('Upload failed: ' + err.message, 'error', 4000);
+        }
+    }
+
     function handleHtmlPaste(html) {
         const turndown = getTurndown();
         if (!turndown) {
@@ -931,8 +1138,50 @@
             return;
         }
 
-        // 3) plain text — Monaco handles it itself
+        // 3) local image file path (Finder/Explorer copy). The clipboard
+        //    carries the absolute path as text/plain — renderers can't read
+        //    file:// URLs cross-scheme, so we hand it to the server which
+        //    reads + uploads and returns the same JSON as a clipboard paste.
+        //    We require an absolute path with an image extension so we
+        //    don't accidentally intercept a regular text paste that happens
+        //    to start with "/" or contain a backslash.
+        if (text && looksLikeImagePath(text)) {
+            e.preventDefault();
+            e.stopPropagation();
+            handleLocalImagePaste(text);
+            return;
+        }
+
+        // 4) plain text — Monaco handles it itself
         void text;
+    }
+
+    // Detect "this text/plain blob looks like a path to an image on disk".
+    // Used by onPaste to decide whether to route a paste through the local-
+    // image path. Cheap checks only — the server endpoint does the real
+    // validation (existence, symlink check, size, extension whitelist).
+    const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|bmp|tiff?|avif|heic|heif)$/i;
+    // Common web-URL-style prefixes that markdown authors use to reference
+    // already-uploaded images. We never upload these — pasting them as
+    // plain text is what the user wants (they're authoring a reference,
+    // not a new upload).
+    const WEB_PATH_PREFIX = /^\/(images|assets|static|media|content|files|uploads)\//i;
+    function looksLikeImagePath(text) {
+        if (!text) return false;
+        const trimmed = text.trim();
+        if (trimmed.length === 0 || trimmed.length > 1024) return false;
+        // Single line, no whitespace inside — that's the contract for a path
+        // pasted from a file manager.
+        if (/[\r\n\t]/.test(trimmed)) return false;
+        if (!IMAGE_EXT_RE.test(trimmed)) return false;
+        // Skip web-URL paths — pasting "/images/2026-09/foo.webp" should land
+        // as literal text, not trigger an upload round-trip.
+        if (WEB_PATH_PREFIX.test(trimmed)) return false;
+        // Path-shaped: starts with "/" (POSIX abs), "X:\" (Windows abs), or
+        // a "file:" URL. We don't accept bare filenames without a separator,
+        // because that would also match words like "logo.png" pasted as text.
+        if (!trimmed.startsWith('/') && !/^[a-zA-Z]:[\\/]/.test(trimmed) && !trimmed.startsWith('file:')) return false;
+        return true;
     }
 
     // ---------- monaco ----------
@@ -1890,11 +2139,19 @@
                     }
                 }
             }
-            // No image found — read text and insert via Monaco API.
+            // No image found — read text and route it. We have to mirror
+            // onPaste's heuristics here because Cmd+V is intercepted at the
+            // keydown phase (above), which means the paste event that onPaste
+            // listens to may never fire. So we duplicate the "looks like an
+            // image path" check before letting Monaco insert the literal text.
             const text = await navigator.clipboard.readText();
             if (text) {
-                const sel = editor.getSelection();
-                editor.executeEdits('paste', [{ range: sel, text, forceMoveMarkers: true }]);
+                if (looksLikeImagePath(text)) {
+                    await handleLocalImagePaste(text);
+                } else {
+                    const sel = editor.getSelection();
+                    editor.executeEdits('paste', [{ range: sel, text, forceMoveMarkers: true }]);
+                }
             } else {
                 toast('Clipboard is empty', 'info', 1500);
             }

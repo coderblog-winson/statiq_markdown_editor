@@ -20,15 +20,18 @@ public class MarkdownFileService
 {
     private readonly StatiqRunner _runner;
     private readonly FrontmatterService _fm;
+    private readonly ImageService _imgSvc;
     private readonly ILogger<MarkdownFileService> _log;
 
     public MarkdownFileService(
         StatiqRunner runner,
         FrontmatterService fm,
+        ImageService imgSvc,
         ILogger<MarkdownFileService> log)
     {
         _runner = runner;
         _fm = fm;
+        _imgSvc = imgSvc;
         _log = log;
     }
 
@@ -163,20 +166,46 @@ public class MarkdownFileService
 
     // -------- delete --------
 
-    public (bool ok, string? error) DeletePost(string relativePath)
+    public (bool ok, string? error, int imagesDeleted) DeletePost(string relativePath, bool deleteImages = false)
     {
         var (fullOk, full, err) = ResolveSafePath(relativePath);
-        if (!fullOk) return (false, err);
-        if (!File.Exists(full)) return (false, $"file not found: {relativePath}");
+        if (!fullOk) return (false, err, 0);
+        if (!File.Exists(full)) return (false, $"file not found: {relativePath}", 0);
+
+        // Read the body BEFORE we delete the file — we need it to find any
+        // referenced images we may also want to clean up.
+        string body;
+        try { body = File.ReadAllText(full); }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Could not read post body before delete: {Path}", full);
+            body = string.Empty;
+        }
+
+        int imagesDeleted = 0;
+        if (deleteImages)
+        {
+            // Cascade delete: scan the body for any local image references and
+            // try to remove the files. Failures (file already gone, symlink, etc.)
+            // are logged but never block the post delete — the cascade is a
+            // convenience, not a transactional rollback.
+            foreach (var url in ExtractLocalImageUrls(body))
+            {
+                var (imgOk, imgErr) = _imgSvc.DeleteImageByUrl(url);
+                if (imgOk) imagesDeleted++;
+                else _log.LogWarning("Could not cascade-delete image {Url}: {Err}", url, imgErr);
+            }
+        }
+
         try
         {
             File.Delete(full);
-            return (true, null);
+            return (true, null, imagesDeleted);
         }
         catch (Exception ex)
         {
             _log.LogError(ex, "Delete failed: {Path}", full);
-            return (false, ex.Message);
+            return (false, ex.Message, 0);
         }
     }
 
@@ -203,9 +232,14 @@ public class MarkdownFileService
         }
 
         var date = req.Date ?? DateTime.Today;
+        // The auto-derived slug is just the title — no year suffix. Year was
+        // historically appended to disambiguate same-title posts, but it made
+        // every URL look like a date-stamped blog, and the per-month folder
+        // already groups posts by date. Collisions are still resolved by the
+        // -2 / -3 fallback further down.
         var slug = hasExplicitSlug
             ? Slugify(req.Slug!)
-            : $"{Slugify(title)}-{date:yyyy}";
+            : Slugify(title);
         if (string.IsNullOrWhiteSpace(slug))
             return (false, null, "could not derive a slug from title");
 
@@ -348,6 +382,52 @@ public class MarkdownFileService
 
     private static readonly Regex SlugifyStrip = new("[^a-z0-9]+", RegexOptions.Compiled);
     private static readonly Regex SlugifyCollapse = new("-{2,}", RegexOptions.Compiled);
+
+    // Patterns for finding image references in a post body. Three flavours:
+    //   1) <?# Figure src="/images/..." ?>
+    //      Our _PostLayout convention — these are always local.
+    //   2) ![alt](/images/... "title")
+    //      Standard markdown image with optional title.
+    //   3) <img src="/images/...">
+    //      Raw HTML.
+    // All three require the URL to start with /images/ — anything else is
+    // either a CDN/external link or pointing at theme-shipped assets, and
+    // should not be touched by the cascade.
+    private static readonly Regex FigurePattern = new(
+        @"<\?#\s*Figure[^>]*src=""([^""]+)""[^>]*\?>",
+        RegexOptions.Compiled);
+    private static readonly Regex MdImagePattern = new(
+        @"!\[[^\]]*\]\(([^)\s]+)(?:\s+""[^""]*"")?\)",
+        RegexOptions.Compiled);
+    private static readonly Regex HtmlImgPattern = new(
+        @"<img[^>]+src=""([^""]+)""[^>]*/?>",
+        RegexOptions.Compiled);
+
+    /// <summary>
+    /// Extract every local image URL referenced in the markdown body.
+    /// Only paths starting with "/images/" are returned — CDN URLs and
+    /// theme-shipped assets are filtered out so the cascade never touches
+    /// anything we don't own.
+    /// </summary>
+    public static List<string> ExtractLocalImageUrls(string body)
+    {
+        if (string.IsNullOrEmpty(body)) return new List<string>();
+        var found = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var pat in new[] { FigurePattern, MdImagePattern, HtmlImgPattern })
+        {
+            foreach (Match m in pat.Matches(body))
+            {
+                var url = m.Groups[1].Value.Trim();
+                if (!url.StartsWith("/images/", StringComparison.OrdinalIgnoreCase)) continue;
+                // Strip the optional title portion of a markdown image — already
+                // handled by the regex, but defensive in case of weird inputs.
+                var bang = url.IndexOf(' ');
+                if (bang > 0) url = url[..bang];
+                found.Add(url);
+            }
+        }
+        return found.ToList();
+    }
 
     public static string Slugify(string s)
     {

@@ -57,16 +57,50 @@ catch
 // relative to the actual install location — NOT the source tree on a
 // developer's machine.
 //
-// Heuristic: if `wwwroot/` exists next to the running exe, we are in a
-// packaged layout (Electron's main.js sets `cwd: path.dirname(exe)` and
-// the extraResources rule copies the whole dist/server/ tree alongside
-// the binary). Otherwise fall back to AppContext.BaseDirectory which is
-// the right answer for `dotnet run` / dev loop.
-var exeDir = Path.GetDirectoryName(Environment.ProcessPath) ?? "";
-var resolvedContentRoot =
-    !string.IsNullOrEmpty(exeDir) && Directory.Exists(Path.Combine(exeDir, "wwwroot"))
-        ? exeDir
-        : AppContext.BaseDirectory;
+// ContentRoot resolution — three cases:
+//
+//   1. Packaged .app / native exe:
+//        Environment.ProcessPath = "/path/to/StatiqMarkdownEditor" (bare exe).
+//        Its directory contains wwwroot/ (Electron's extraResources copies the
+//        whole dist/server/ tree). Use that directory.
+//
+//   2. `dotnet run` / `dotnet watch` / `dotnet exec <dll>` dev loop:
+//        Environment.ProcessPath = ".../bin/{Config}/{tfm}/<Project>.dll".
+//        AppContext.BaseDirectory lands on bin/{Config}/{tfm}/ — MSBuild copies
+//        sites/, appsettings.json, themes/ in there, so files written by
+//        CreatePost would land under bin/.../sites/<name>/input/posts/ and NOT
+//        under the source tree the user sees in their editor. Walk up from the
+//        bin dir to the project root so CreatePost writes to the real source.
+//
+//   3. Single-file publish from source (no Electron packaging):
+//        AppContext.BaseDirectory is the source project root — that is
+//        already the correct answer.
+var processPath = Environment.ProcessPath ?? "";
+var processDir = Path.GetDirectoryName(processPath) ?? "";
+var processNormalized = processDir.Replace('\\', '/');
+var isInBin = processNormalized.Contains("/bin/", StringComparison.OrdinalIgnoreCase);
+var exeDirHasWwwroot = !string.IsNullOrEmpty(processDir) && Directory.Exists(Path.Combine(processDir, "wwwroot"));
+
+string resolvedContentRoot;
+if (!isInBin && exeDirHasWwwroot)
+{
+    // Packaged .app / native exe.
+    resolvedContentRoot = processDir;
+}
+else if (isInBin)
+{
+    // Dev loop: walk from bin/{Config}/{tfm}/ back to the project root.
+    var baseDir = AppContext.BaseDirectory;
+    var normalized = baseDir.Replace('\\', '/');
+    var binMarker = normalized.LastIndexOf("/bin/", StringComparison.OrdinalIgnoreCase);
+    resolvedContentRoot = binMarker > 0 ? baseDir[..binMarker] : baseDir;
+}
+else
+{
+    // Single-file publish from source. AppContext.BaseDirectory is the
+    // project root — leave it.
+    resolvedContentRoot = AppContext.BaseDirectory;
+}
 
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
@@ -174,10 +208,18 @@ app.MapPut("/api/posts/{*path}", async (string path, HttpRequest req, MarkdownFi
     return ok ? Results.Ok(new { ok = true }) : Results.BadRequest(new { error = err });
 });
 
-app.MapDelete("/api/posts/{*path}", (string path, MarkdownFileService svc) =>
+app.MapDelete("/api/posts/{*path}", (HttpContext ctx, string path, MarkdownFileService svc) =>
 {
-    var (ok, err) = svc.DeletePost(path);
-    return ok ? Results.Ok(new { ok = true }) : Results.BadRequest(new { error = err });
+    // `?deleteImages=true` cascades into deleting the post's referenced image
+    // files (any /images/... paths found in the body). Off by default — the
+    // user has to opt in via the list page's delete confirmation checkbox.
+    var deleteImages = string.Equals(
+        ctx.Request.Query["deleteImages"].ToString(), "true",
+        StringComparison.OrdinalIgnoreCase);
+
+    var (ok, err, imagesDeleted) = svc.DeletePost(path, deleteImages);
+    if (!ok) return Results.BadRequest(new { error = err });
+    return Results.Ok(new { ok = true, imagesDeleted });
 });
 
 app.MapPost("/api/posts", (NewPostRequest body, MarkdownFileService svc) =>
@@ -269,6 +311,87 @@ app.MapPut("/api/images", async (HttpRequest req, ImageService imgSvc) =>
     }
 
     var (ok, resp, err) = imgSvc.SaveWebp(file.OpenReadStream(), file.FileName, postDate, file.Length);
+    return ok ? Results.Ok(resp) : Results.BadRequest(new { error = err });
+});
+
+// Local-image proxy: when the user pastes a file path (e.g. dragged/copied
+// from Finder), the renderer can't read file:// URLs directly because the
+// BrowserWindow is loaded from http://127.0.0.1:<port> and Electron's CSP /
+// contextIsolation blocks cross-scheme fetches. So the renderer hands the
+// raw path to us and we open + upload it on the server side, returning the
+// same response shape as PUT /api/images.
+//
+// SECURITY:
+//   This is intentionally a narrow read endpoint for a single-user desktop
+//   tool. Path validation is the only protection:
+//     • must be absolute + fully qualified (no relative / UNC tricks)
+//     • must resolve to a regular file (no directories, no symlinks —
+//       a symlink could let an attacker redirect to anywhere on disk)
+//     • extension must be in the image whitelist below
+//     • size must be <= ImageService.MaxBytes (25 MB)
+app.MapGet("/api/local-image", (HttpContext ctx, ImageService imgSvc, ILogger<Program> log) =>
+{
+    var raw = ctx.Request.Query["path"].ToString();
+    if (string.IsNullOrWhiteSpace(raw))
+        return Results.BadRequest(new { error = "path required" });
+
+    string fullPath;
+    try
+    {
+        fullPath = Path.GetFullPath(raw);
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { error = "could not resolve path: " + ex.Message });
+    }
+
+    if (!Path.IsPathFullyQualified(fullPath))
+        return Results.BadRequest(new { error = "path must be absolute" });
+
+    // Reject symlinks — a hostile path could symlink to anywhere on disk
+    // (e.g. /etc/passwd) and we'd happily hand the file to the image
+    // pipeline. Real users copy real files, never symlinks.
+    var attrs = File.GetAttributes(fullPath);
+    if ((attrs & FileAttributes.ReparsePoint) != 0)
+        return Results.BadRequest(new { error = "symlinks are not allowed" });
+
+    if (!File.Exists(fullPath) || (attrs & FileAttributes.Directory) != 0)
+        return Results.BadRequest(new { error = "not a regular file" });
+
+    // Whitelist image extensions only — text/binary files would either fail
+    // inside Image.Load (which is fine) or, worse, succeed in a way that
+    // produces a tiny/garbage .webp with no useful error.
+    var ext = Path.GetExtension(fullPath).ToLowerInvariant();
+    var allowedExts = new HashSet<string> { ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff", ".heic", ".avif" };
+    if (!allowedExts.Contains(ext))
+        return Results.BadRequest(new { error = $"unsupported extension '{ext}'" });
+
+    var size = new FileInfo(fullPath).Length;
+    if (size > ImageService.MaxBytes)
+        return Results.BadRequest(new { error = $"file too large ({size / 1024 / 1024} MB; max {ImageService.MaxBytes / 1024 / 1024} MB)" });
+
+    // Optional targetDate — same semantics as PUT /api/images.
+    DateTime? postDate = null;
+    var dateOverride = ctx.Request.Query["targetDate"].ToString();
+    if (string.Equals(dateOverride, "now", StringComparison.OrdinalIgnoreCase))
+        postDate = null;
+    else if (!string.IsNullOrEmpty(dateOverride) && DateTime.TryParse(dateOverride, out var parsed))
+        postDate = parsed;
+
+    var suggestedName = Path.GetFileName(fullPath);
+    FileStream stream;
+    try
+    {
+        // FileShare.Read: don't lock out other readers (image viewer etc.).
+        // The stream is disposed by ImageService.SaveWebp inside its using.
+        stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { error = "could not open file: " + ex.Message });
+    }
+
+    var (ok, resp, err) = imgSvc.SaveWebp(stream, suggestedName, postDate, size);
     return ok ? Results.Ok(resp) : Results.BadRequest(new { error = err });
 });
 

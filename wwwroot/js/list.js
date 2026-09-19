@@ -38,6 +38,7 @@
         deleteModal: document.getElementById('delete-modal'),
         deleteName: document.getElementById('delete-name'),
         deleteConfirm: document.getElementById('delete-confirm'),
+        deleteImages: document.getElementById('delete-images'),
     };
 
     // ---------- toast ----------
@@ -340,15 +341,25 @@
     function openDelete(path) {
         deleteTargetPath = path;
         els.deleteName.textContent = path;
+        // Reset the cascade checkbox every time the modal opens. Defaulting to
+        // checked would feel helpful but the failure mode (losing an upload you
+        // wanted to keep) is worse than the convenience gain.
+        if (els.deleteImages) els.deleteImages.checked = false;
         openModal(els.deleteModal);
     }
     async function confirmDelete() {
         if (!deleteTargetPath) return;
         els.deleteConfirm.disabled = true;
+        const cascade = !!(els.deleteImages && els.deleteImages.checked);
+        const url = '/api/posts/' + encodeURI(deleteTargetPath)
+            + (cascade ? '?deleteImages=true' : '');
         try {
-            await fetchJson('/api/posts/' + encodeURI(deleteTargetPath), { method: 'DELETE' });
+            const r = await fetchJson(url, { method: 'DELETE' });
             closeModal(els.deleteModal);
-            toast('Deleted ' + deleteTargetPath, 'success');
+            const extra = (r && r.imagesDeleted > 0)
+                ? ` (and ${r.imagesDeleted} image${r.imagesDeleted === 1 ? '' : 's'})`
+                : '';
+            toast('Deleted ' + deleteTargetPath + extra, 'success');
             // The current page may now be empty if this was the last
             // item on it. loadCurrentPage → server clamps `page` back
             // into range, so we land on a valid page automatically.
