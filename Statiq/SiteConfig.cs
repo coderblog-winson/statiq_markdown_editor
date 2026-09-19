@@ -78,6 +78,21 @@ public class SiteConfig
     public int PreviewPort { get; set; } = 5080;
 
     /// <summary>
+    /// Text to draw as a watermark on every uploaded image. Empty = no
+    /// watermark. Drawn bottom-right in semi-transparent white with a drop
+    /// shadow by the WatermarkTool EXE.
+    /// </summary>
+    public string Watermark { get; set; } = "";
+
+    /// <summary>
+    /// Absolute path to the WatermarkTool EXE. Leave empty to let
+    /// ImageService resolve the default
+    /// (<c>{editorRoot}/WatermarkTool/bin/Debug/net9.0/WatermarkTool[.exe]</c>).
+    /// Used only when <see cref="Watermark"/> is non-empty.
+    /// </summary>
+    public string WatermarkToolPath { get; set; } = "";
+
+    /// <summary>
     /// Compute the absolute paths under the editor root. Called by StatiqRunner
     /// before passing the config to Bootstrapper.
     ///

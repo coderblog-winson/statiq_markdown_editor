@@ -34,6 +34,13 @@ sites/*
 
 themes/_demo/
 
+# WatermarkTool batch working dirs — input = source images, output =
+# watermarked result. Never commit; they're the user's private assets
+# (and regenerated every time the cron runs, if any).
+WatermarkTool/input/
+WatermarkTool/output/
+WatermarkTool/org_images/
+
 # Generated artefacts
 cache/
 output/

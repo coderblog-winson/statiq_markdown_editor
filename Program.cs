@@ -247,6 +247,12 @@ app.MapPost("/api/posts/rename", (HttpContext ctx, RenameRequest body, MarkdownF
 
 app.MapGet("/api/categories", (MarkdownFileService svc) => Results.Ok(svc.ListCategories()));
 
+// Distinct top-level category folder names under input/posts/. Used by the
+// New Post form to populate the CategoryFolder dropdown — these are the
+// directories a sidebar /category nav would link to. Excludes YYYY-MM and
+// YYYYMM month directories so only "real" topic folders show up.
+app.MapGet("/api/category-folders", (MarkdownFileService svc) => Results.Ok(svc.ListCategoryFolders()));
+
 // Serve image files under /images/{*path} by reading them directly from
 // the active site's input/images/ directory. This lets the live preview
 // pane render <img src="/images/2026-09/foo.webp"> without a Statiq build.

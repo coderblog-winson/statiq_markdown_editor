@@ -98,6 +98,30 @@ public class MarkdownFileService
             .ToList();
     }
 
+    /// <summary>
+    /// Distinct top-level subdirectories under <c>input/posts/</c> that
+    /// represent topic categories (e.g. <c>financial_information</c>,
+    /// <c>stock_investment</c>). Excludes the per-month <c>YYYY-MM</c> /
+    /// <c>YYYYMM</c> directories — those are date buckets, not topics.
+    ///
+    /// Used by the New Post form's CategoryFolder dropdown and (optionally)
+    /// by sidebar templates that want to auto-list topic folders.
+    /// </summary>
+    public List<string> ListCategoryFolders()
+    {
+        if (!HasActiveSite(out var contentRoot))
+            return new List<string>();
+        if (!Directory.Exists(contentRoot))
+            return new List<string>();
+
+        var monthLike = new Regex(@"^\d{4}-?\d{2}$", RegexOptions.Compiled);
+        return Directory.EnumerateDirectories(contentRoot)
+            .Select(Path.GetFileName)
+            .Where(n => !string.IsNullOrEmpty(n) && !monthLike.IsMatch(n))
+            .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
     // -------- read --------
 
     public (bool ok, PostContent? post, string? error) ReadPost(string relativePath)
@@ -243,12 +267,36 @@ public class MarkdownFileService
         if (string.IsNullOrWhiteSpace(slug))
             return (false, null, "could not derive a slug from title");
 
-        // Drop the new file under a {YYYY-MM}/ subdirectory so the posts tree
-        // matches the convention used in the editor-managed sites. The month
-        // is "now" — this is where the post is *created*, not when it claims
-        // to be published. Existing posts outside a month dir are not touched.
+        // Resolve the target directory.
+        //   CategoryFolder set  → posts/<folder>/YYYY-MM/<slug>.md
+        //   CategoryFolder empty → posts/YYYY-MM/<slug>.md
+        // The category folder is the winsoninvest-style convention: posts are
+        // grouped by topic (financial_information, stock_investment, etc.) and
+        // the sidebar's Topics nav links to /posts/<folder>/index.html. Sites
+        // that don't use this convention can leave CategoryFolder empty and
+        // the post lands in the bare month directory.
         var yearMonth = DateTime.Today.ToString("yyyy-MM");
-        var targetDir = Path.Combine(contentRoot, yearMonth);
+        var categoryFolder = (req.CategoryFolder ?? string.Empty).Trim();
+        string targetDir;
+        if (string.IsNullOrEmpty(categoryFolder))
+        {
+            targetDir = Path.Combine(contentRoot, yearMonth);
+        }
+        else
+        {
+            // Defence in depth — refuse path-traversal and shell-confusing chars.
+            if (categoryFolder.Contains("..") || categoryFolder.Contains('/') ||
+                categoryFolder.Contains('\\') || categoryFolder.Contains(Path.DirectorySeparatorChar) ||
+                categoryFolder.Contains(Path.AltDirectorySeparatorChar))
+            {
+                return (false, null, "CategoryFolder must be a single folder name (no '/' or '..')");
+            }
+            if (!System.Text.RegularExpressions.Regex.IsMatch(categoryFolder, @"^[a-z0-9][a-z0-9_-]*$"))
+            {
+                return (false, null, "CategoryFolder must start with a lowercase letter/digit and contain only lowercase letters, digits, underscore, dash");
+            }
+            targetDir = Path.Combine(contentRoot, categoryFolder, yearMonth);
+        }
 
         var fileName = $"{slug}.md";
         var full = Path.Combine(targetDir, fileName);

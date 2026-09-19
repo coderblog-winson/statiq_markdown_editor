@@ -14,6 +14,8 @@
         date: document.getElementById('date-field'),
         layout: document.getElementById('layout-field'),
         category: document.querySelector('[name=category]'),
+        categoryFolder: document.querySelector('[name=categoryFolder]'),
+        knownCategoryFolders: document.getElementById('known-category-folders'),
         tags: document.querySelector('[name=tags]'),
         image: document.querySelector('[name=image]'),
         description: document.querySelector('[name=description]'),
@@ -180,7 +182,21 @@
         try {
             const cats = await fetchJson('/api/categories');
             els.knownCategories.innerHTML = cats.map(c => `<option value="${escapeAttr(c)}">`).join('');
-        } catch {}
+        } catch (err) {
+            console.warn('[new] load categories failed', err);
+        }
+    }
+
+    async function loadCategoryFolders() {
+        try {
+            const folders = await fetchJson('/api/category-folders');
+            if (els.knownCategoryFolders) {
+                els.knownCategoryFolders.innerHTML = folders
+                    .map(f => `<option value="${escapeAttr(f)}">`).join('');
+            }
+        } catch (err) {
+            console.warn('[new] load category folders failed', err);
+        }
     }
 
     async function submit(e) {
@@ -217,6 +233,7 @@
             date: els.date.value || undefined,
             layout: els.layout.value || undefined,
             category: els.category.value.trim() || undefined,
+            categoryFolder: els.categoryFolder ? els.categoryFolder.value.trim() || undefined : undefined,
             description: els.description.value.trim() || undefined,
             image: els.image.value.trim() || undefined,
             tags: (els.tags.value || '').split(',').map(s => s.trim()).filter(Boolean),
@@ -256,6 +273,7 @@
     els.form.addEventListener('submit', submit);
     document.addEventListener('DOMContentLoaded', () => {
         loadCategories();
+        loadCategoryFolders();
         updateSlugHint();
         buildPreview();
     });

@@ -54,6 +54,19 @@
                        placeholder="ASP.NET" />
                 <datalist id="known-categories"></datalist>
             </label>
+            <label>
+                <span>Category folder <em>(topic subdir; empty = no category)</em></span>
+                <input type="text" name="categoryFolder" id="category-folder-field"
+                       list="known-category-folders" maxlength="60" autocomplete="off"
+                       placeholder="Category Folder Name" />
+                <datalist id="known-category-folders"></datalist>
+                <span class="field-hint">
+                    When set, the post is saved under
+                    <code>posts/&lt;folder&gt;/YYYY-MM/&lt;slug&gt;.md</code>
+                    and the matching sidebar nav link points at
+                    <code>/posts/&lt;folder&gt;/index.html</code>.
+                </span>
+            </label>
         </div>
 
         <label>

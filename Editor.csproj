@@ -21,7 +21,7 @@
          used like a variable" / "Response/Documents does not exist".
          Note: paths use FORWARD slashes — backslashes are Windows-only and
          silently fail on macOS/Linux. -->
-    <DefaultItemExcludes>$(DefaultItemExcludes);themes/**;sites/**;dist/**</DefaultItemExcludes>
+    <DefaultItemExcludes>$(DefaultItemExcludes);themes/**;sites/**;WatermarkTool/**;dist/**</DefaultItemExcludes>
   </PropertyGroup>
 
   <ItemGroup>

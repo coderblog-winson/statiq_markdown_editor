@@ -1,9 +1,9 @@
+using System.Diagnostics;
+using System.Text.Json;
 using System.Text.RegularExpressions;
-using SixLabors.Fonts;
 using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Drawing.Processing;
 using SixLabors.ImageSharp.Formats.Webp;
-using SixLabors.ImageSharp.Processing;
+using SME.Statiq;
 using StatiqMarkdownEditor.Models;
 
 namespace StatiqMarkdownEditor.Services;
@@ -14,12 +14,11 @@ namespace StatiqMarkdownEditor.Services;
 /// The target month comes from the post's frontmatter Date when available,
 /// otherwise the upload time.
 ///
-/// Watermarking is wired up but disabled by default: the per-site
-/// <c>Watermark</c> field lives on <see cref="SiteConfig"/> and is empty
-/// unless the user opts in. When non-empty, the text is drawn bottom-right
-/// in white bold sans-serif with a subtle dark drop shadow. Font is
-/// resolved from a short list of system paths (Helvetica on macOS,
-/// Arial Bold on Windows, DejaVu on Linux) — no font file bundled.
+/// Watermarking is delegated to the sibling <c>WatermarkTool</c> project: when
+/// the active site's <c>config.json</c> has a non-empty <c>Watermark</c> field,
+/// the upload is staged to a temp file, WatermarkTool EXE is invoked to draw
+/// the watermark and re-encode as WebP. Empty watermark → encode with
+/// ImageSharp directly (faster, no EXE spawn).
 /// </summary>
 public class ImageService
 {
@@ -46,17 +45,65 @@ public class ImageService
     }
 
     /// <summary>
-    /// Per-site watermark text. Empty = no watermark. Reads from the active
-    /// site's <c>config.json</c> if it has a <c>Watermark</c> field.
+    /// Per-site watermark text from the active site's <c>config.json</c>.
+    /// Empty = no watermark (ImageSharp encode path). Non-empty = dispatch
+    /// through WatermarkTool EXE.
     /// </summary>
     private string Watermark
     {
         get
         {
-            var paths = _runner.GetActiveSitePathsSync();
-            // SiteConfig doesn't yet expose Watermark — when it does,
-            // read it here. Until then: no watermark.
-            return string.Empty;
+            var cfg = LoadActiveSiteConfig();
+            return cfg?.Watermark?.Trim() ?? string.Empty;
+        }
+    }
+
+    /// <summary>
+    /// Path to the WatermarkTool EXE. Reads from
+    /// <see cref="SiteConfig.WatermarkToolPath"/> if set, otherwise defaults to
+    /// <c>{editorRoot}/WatermarkTool/bin/Debug/net9.0/WatermarkTool[.exe]</c>
+    /// (the standard debug-build location — WatermarkTool is a sub-project
+    /// inside the editor repo, not a sibling).
+    /// </summary>
+    private string WatermarkToolExePath
+    {
+        get
+        {
+            var cfg = LoadActiveSiteConfig();
+            if (cfg != null && !string.IsNullOrEmpty(cfg.WatermarkToolPath))
+                return cfg.WatermarkToolPath;
+
+            var exeSuffix = OperatingSystem.IsWindows() ? ".exe" : "";
+            return Path.GetFullPath(Path.Combine(
+                _runner.EditorRoot, "WatermarkTool", "bin", "Debug", "net9.0",
+                "WatermarkTool" + exeSuffix));
+        }
+    }
+
+    /// <summary>
+    /// Sync-load the active site's <c>config.json</c>. Returns null if no
+    /// active site or config can't be parsed — both call sites already treat
+    /// null as "feature disabled".
+    /// </summary>
+    private SiteConfig? LoadActiveSiteConfig()
+    {
+        var paths = _runner.GetActiveSitePathsSync();
+        if (paths == null) return null;
+        var cfgPath = Path.Combine(paths.SiteDir, "config.json");
+        if (!File.Exists(cfgPath)) return null;
+        try
+        {
+            var json = File.ReadAllText(cfgPath);
+            var opts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            var cfg = JsonSerializer.Deserialize<SiteConfig>(json, opts);
+            if (cfg == null) return null;
+            cfg.Name = Path.GetFileName(paths.SiteDir);
+            return cfg;
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Could not parse site config at {Path}", cfgPath);
+            return null;
         }
     }
 
@@ -102,55 +149,66 @@ public class ImageService
         if (File.Exists(fullPath))
             return (false, null, "could not find a free filename after 1000 tries");
 
-        // Pull watermark up front so we can decide whether to draw before
-        // any expensive work. Empty watermark = no draw (cheaper + correct
-        // for sites that opt out).
-        var watermark = Watermark.Trim();
-        var drawWatermark = !string.IsNullOrEmpty(watermark);
-        Font? wmFont = null;
-        if (drawWatermark)
-        {
-            try { wmFont = ResolveFont(); }
-            catch (Exception ex)
-            {
-                _log.LogWarning(ex, "Watermark font could not be resolved; skipping watermark for {Path}", fullPath);
-                drawWatermark = false;
-            }
-        }
+        var watermark = Watermark;
+        var useWatermarkTool = !string.IsNullOrEmpty(watermark);
 
         try
         {
             Directory.CreateDirectory(dir);
             int width, height;
             long savedSize;
-            using (var image = Image.Load(input))
+
+            if (useWatermarkTool)
             {
-                width = image.Width;
-                height = image.Height;
-
-                if (drawWatermark && wmFont is not null)
+                // WatermarkTool reads the source, draws the watermark, and writes
+                // the destination as WebP. We just stage the input to a temp file
+                // and probe the resulting dims after (Image.Identify reads only
+                // the header, doesn't decode pixels).
+                var tempIn = Path.Combine(Path.GetTempPath(), $"wm-{Guid.NewGuid():N}.src");
+                try
                 {
-                    ApplyWatermark(image, watermark!, wmFont);
+                    using (var fs = File.Create(tempIn))
+                        input.CopyTo(fs);
+
+                    var exitCode = RunWatermarkTool(tempIn, fullPath, watermark);
+                    if (exitCode != 0)
+                        return (false, null, $"WatermarkTool exited with code {exitCode} (check server logs)");
+
+                    var info = Image.Identify(fullPath);
+                    width = info.Width;
+                    height = info.Height;
+                    savedSize = new FileInfo(fullPath).Length;
                 }
-
-                // WebP with quality 85 — matches the og:image convention used in
-                // the coderblog project. No resize: we trust the source dimensions.
-                var encoder = new WebpEncoder { Quality = 85 };
-                using (var fs = File.Create(fullPath))
+                finally
                 {
-                    image.Save(fs, encoder);
+                    try { if (File.Exists(tempIn)) File.Delete(tempIn); }
+                    catch (Exception ex) { _log.LogWarning(ex, "Could not delete temp input {Path}", tempIn); }
                 }
             }
-            // File handle is closed by now — safe to read final size.
-            savedSize = new FileInfo(fullPath).Length;
-            _log.LogInformation("Saved {Path} ({Bytes} bytes from {Source}, watermark={Wm})",
-                fullPath, savedSize, suggestedName, drawWatermark ? watermark : "(none)");
+            else
+            {
+                // No watermark — ImageSharp encode directly (faster, no EXE spawn).
+                using (var image = Image.Load(input))
+                {
+                    width = image.Width;
+                    height = image.Height;
+                    // WebP with quality 85 — matches the og:image convention used
+                    // in the coderblog project. No resize: we trust the source.
+                    var encoder = new WebpEncoder { Quality = 85 };
+                    using var fs = File.Create(fullPath);
+                    image.Save(fs, encoder);
+                }
+                savedSize = new FileInfo(fullPath).Length;
+            }
 
-            // The URL the markdown references must match what Statiq emits
-            // at build time. Convention: drop the "input/" prefix so
+            _log.LogInformation("Saved {Path} ({Bytes} bytes from {Source}, watermark={Wm})",
+                fullPath, savedSize, suggestedName, useWatermarkTool ? watermark : "(none)");
+
+            // The URL the markdown references must match what Statiq emits at
+            // build time. Convention: drop the "input/" prefix so
             // `input/images/2026-09/foo.webp` becomes `/images/2026-09/foo.webp`
-            // in the published HTML. Coderblog, alphaLedger, and most
-            // themes follow this.
+            // in the published HTML. Coderblog, alphaLedger, and most themes
+            // follow this.
             const string urlSubdir = "images";
 
             return (true, new ImageUploadResponse
@@ -174,109 +232,57 @@ public class ImageService
         }
     }
 
-    // ----------------------------------------------------------------
-    //  Watermark rendering
-    // ----------------------------------------------------------------
-
     /// <summary>
-    /// Draw <paramref name="text"/> in the bottom-right of <paramref name="image"/>
-    /// in white, with a small dark drop shadow so it stays legible on light
-    /// backgrounds. Font size scales with image width (~3.2%) and the text
-    /// is inset by ~3% from the right and bottom edges.
+    /// Invoke WatermarkTool EXE in single-file mode. Returns the exit code.
+    /// Throws FileNotFoundException when the EXE is missing — caller logs and
+    /// surfaces the error to the user.
     /// </summary>
-    private static void ApplyWatermark(Image image, string text, Font font)
+    private int RunWatermarkTool(string inPath, string outPath, string text)
     {
-        // Font size proportional to image width. Capped to keep very large
-        // hero images from getting absurdly big watermarks.
-        var fontSize = Math.Clamp(image.Width * 0.032f, 18f, 96f);
-        var sizedFont = new Font(font, fontSize, FontStyle.Bold);
-
-        // Measure first so we can compute the right padding.
-        var measureOptions = new RichTextOptions(sizedFont) { WrappingLength = image.Width };
-        var size = TextMeasurer.MeasureSize(text, measureOptions);
-
-        // Inset ~3% of width from the right and bottom; never less than 12px.
-        var pad = Math.Max(12f, image.Width * 0.03f);
-        var x = image.Width - size.Width - pad;
-        var y = image.Height - size.Height - pad;
-
-        // Drop shadow: render the same text in a dark semi-transparent color
-        // a few pixels offset behind the white text. This keeps the watermark
-        // readable on both light and dark images without us having to sample
-        // the background.
-        var shadowOffset = Math.Max(2f, fontSize * 0.08f);
-        var shadowOpts = new RichTextOptions(sizedFont)
+        var exe = WatermarkToolExePath;
+        if (!File.Exists(exe))
         {
-            Origin = new PointF(x + shadowOffset, y + shadowOffset),
-            WrappingLength = image.Width,
+            throw new FileNotFoundException(
+                $"WatermarkTool EXE not found at {exe}. " +
+                "Build it first: dotnet build -c Debug from WatermarkTool/. " +
+                "Or set config.json WatermarkToolPath to a custom location.");
+        }
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = exe,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
         };
-        var mainOpts = new RichTextOptions(sizedFont)
-        {
-            Origin = new PointF(x, y),
-            WrappingLength = image.Width,
-        };
+        // ArgumentList auto-escapes each arg — safer than building a string.
+        psi.ArgumentList.Add("--in");
+        psi.ArgumentList.Add(inPath);
+        psi.ArgumentList.Add("--out");
+        psi.ArgumentList.Add(outPath);
+        psi.ArgumentList.Add("--text");
+        psi.ArgumentList.Add(text);
 
-        image.Mutate(ctx => ctx
-            .DrawText(shadowOpts, text, Color.FromRgba(0, 0, 0, 180))
-            .DrawText(mainOpts, text, Color.FromRgba(255, 255, 255, 230))
-        );
-    }
+        _log.LogInformation("Invoking WatermarkTool: {Exe} --in {In} --out {Out} --text \"{Text}\"",
+            exe, inPath, outPath, text);
 
-    /// <summary>
-    /// Try a short list of system bold-sans font paths (per platform) and
-    /// load the first one that exists. Throws if nothing on the list is
-    /// available — caller logs and falls back to "no watermark".
-    /// </summary>
-    private static Font ResolveFont()
-    {
-        var candidates = new List<string>();
-        if (OperatingSystem.IsMacOS())
+        using var proc = Process.Start(psi)!;
+        // Drain stdout/stderr asynchronously so the child doesn't block on a
+        // full pipe buffer if it prints a lot.
+        var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+        var stderrTask = proc.StandardError.ReadToEndAsync();
+        if (!proc.WaitForExit(60_000))
         {
-            candidates.Add("/System/Library/Fonts/Helvetica.ttc");
-            candidates.Add("/System/Library/Fonts/HelveticaNeue.ttc");
-            candidates.Add("/System/Library/Fonts/Supplemental/Arial.ttf");
-            candidates.Add("/System/Library/Fonts/Hiragino Sans GB.ttc");
-            candidates.Add("/System/Library/Fonts/Supplemental/Arial Bold.ttf");
+            try { proc.Kill(entireProcessTree: true); } catch { /* best effort */ }
+            throw new TimeoutException("WatermarkTool did not finish within 60s");
         }
-        else if (OperatingSystem.IsWindows())
-        {
-            candidates.Add(@"C:\Windows\Fonts\arialbd.ttf");
-            candidates.Add(@"C:\Windows\Fonts\segoeuib.ttf");
-        }
-        else // Linux / other
-        {
-            candidates.Add("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf");
-            candidates.Add("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf");
-            candidates.Add("/usr/share/fonts/TTF/DejaVuSans-Bold.ttf");
-        }
+        var stdout = stdoutTask.GetAwaiter().GetResult();
+        var stderr = stderrTask.GetAwaiter().GetResult();
+        if (!string.IsNullOrWhiteSpace(stdout)) _log.LogDebug("WatermarkTool stdout: {Out}", stdout.Trim());
+        if (!string.IsNullOrWhiteSpace(stderr)) _log.LogDebug("WatermarkTool stderr: {Err}", stderr.Trim());
 
-        Exception? lastEx = null;
-        foreach (var path in candidates)
-        {
-            if (!File.Exists(path)) continue;
-            try
-            {
-                var collection = new FontCollection();
-                var family = collection.Add(path);
-                // Try Bold first; fall back to regular if no bold face is in
-                // the family (common for .ttc files that only ship one style).
-                // CreateFont requires an emSize, so we pass a placeholder
-                // value here — the actual size is set per-render via
-                // `new Font(face, size, FontStyle.Bold)`.
-                const float probeSize = 12f;
-                var face = family.TryGetMetrics(FontStyle.Bold, out _)
-                    ? family.CreateFont(probeSize, FontStyle.Bold)
-                    : family.CreateFont(probeSize);
-                return face;
-            }
-            catch (Exception ex)
-            {
-                lastEx = ex;
-            }
-        }
-        throw new InvalidOperationException(
-            $"No usable bold-sans font found. Tried: {string.Join(", ", candidates)}",
-            lastEx);
+        return proc.ExitCode;
     }
 
     // ----------------------------------------------------------------

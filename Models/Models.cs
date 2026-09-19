@@ -76,6 +76,16 @@ public class NewPostRequest
     /// created posts are immediately publishable.
     /// </summary>
     public bool Draft { get; set; } = false;
+    /// <summary>
+    /// Subdirectory under <c>input/posts/</c> where the post is filed —
+    /// posts go to <c>posts/&lt;categoryFolder&gt;/&lt;YYYY-MM&gt;/&lt;slug&gt;.md</c>.
+    /// Used to group posts by topic; the matching sidebar link is
+    /// <c>/posts/&lt;categoryFolder&gt;/index.html</c>. Empty = no category
+    /// folder (post goes under <c>posts/&lt;YYYY-MM&gt;/&lt;slug&gt;.md</c> only).
+    /// Must be a single folder name: lowercase letters/digits/underscore/dash,
+    /// starting with a letter or digit, no separators or "..".
+    /// </summary>
+    public string? CategoryFolder { get; set; }
 }
 
 public class RenameRequest

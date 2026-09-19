@@ -43,6 +43,19 @@ Open <http://127.0.0.1:5080>.
 
 That's it. You have a working build pipeline.
 
+### Optional: build the WatermarkTool EXE for image watermarks
+
+The watermark-on-upload feature (opt-in per site via `config.json` `Watermark` field) shells out to a sibling `WatermarkTool` console app. Build it once before first use:
+
+```bash
+cd WatermarkTool
+dotnet build -c Debug
+```
+
+The Editor project does **not** compile WatermarkTool (it's excluded via `<DefaultItemExcludes>themes/**;sites/**;WatermarkTool/**</DefaultItemExcludes>` so Razor doesn't try to compile it as a page source). Build it standalone as above. The default `ImageService` resolver finds it at `{editorRoot}/WatermarkTool/bin/Debug/net9.0/WatermarkTool[.exe]` automatically.
+
+See [Watermark on every upload](#watermark-on-every-upload) below for how to enable it per site.
+
 ---
 
 ## What you get
@@ -287,6 +300,8 @@ All eight fields are canonical. The editor writes them in this exact order on sa
 | `DeployScript` | `scripts/build_deploy.sh` | Bash script for ↑ Deploy button |
 | `GitSyncScript` | `scripts/git_sync.sh` | Bash script for ⇆ Git Sync button |
 | `PreviewPort` | `5080` | Port for the Preview http.server |
+| `Watermark` | `""` | Text drawn bottom-right on every uploaded image (empty = no watermark). Requires `WatermarkTool/bin/Debug/net9.0/WatermarkTool[.exe]` to be built first — see [Quickstart](#optional-build-the-watermarktool-exe-for-image-watermarks). |
+| `WatermarkToolPath` | `""` | Override the WatermarkTool EXE path (absolute). Leave empty to use the default `{editorRoot}/WatermarkTool/bin/Debug/net9.0/WatermarkTool[.exe]`. |
 
 ---
 

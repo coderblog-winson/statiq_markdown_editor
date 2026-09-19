@@ -12,5 +12,6 @@
   "PreviewScript": "scripts/preview.sh",
   "DeployScript": "scripts/build_deploy.sh",
   "GitSyncScript": "scripts/git_sync.sh",
-  "PreviewPort": 5080
+  "PreviewPort": 5080,
+  "Watermark": "Coderblog.in"
 }
